@@ -1,0 +1,163 @@
+{
+  "project": "pygsbox",
+  "version": "v4.8.4",
+  "last_updated": "2026-06-27",
+  "status": "in_progress",
+  "current_phase": 4,
+  "summary": "Phases 1-2-3-4 complete. 28 tests passing. Next: Phase 5 (CLI and Engineering).",
+  "files_created": [
+    "pygsbox/__init__.py",
+    "pygsbox/cli.py",
+    "pygsbox/README.md",
+    "pygsbox/PROGRESS.json",
+    "pygsbox/requirements.txt",
+    "pygsbox/common/__init__.py",
+    "pygsbox/common/version.py",
+    "pygsbox/common/codec.py",
+    "pygsbox/common/compress.py",
+    "pygsbox/common/file_utils.py",
+    "pygsbox/core/__init__.py",
+    "pygsbox/core/splat_data.py",
+    "pygsbox/core/morton.py",
+    "pygsbox/core/transform.py",
+    "pygsbox/core/sh_rotation.py",
+    "pygsbox/formats/__init__.py",
+    "pygsbox/formats/ply.py",
+    "pygsbox/formats/splat.py",
+    "pygsbox/formats/spx.py",
+    "pygsbox/formats/spz.py",
+    "pygsbox/formats/sog.py",
+    "pygsbox/formats/ksplat.py",
+    "pygsbox/formats/glb.py",
+    "pygsbox/advanced/__init__.py",
+    "pygsbox/advanced/kmeans.py",
+    "pygsbox/advanced/simplify.py",
+    "pygsbox/advanced/lod.py",
+    "pygsbox/tests/__init__.py",
+    "pygsbox/tests/test_basic.py"
+  ],
+  "phases": {
+    "phase_1": {
+      "name": "Common Utilities",
+      "status": "complete"
+    },
+    "phase_2": {
+      "name": "Core Data Structures",
+      "status": "complete"
+    },
+    "phase_3": {
+      "name": "Format Readers/Writers",
+      "status": "complete",
+      "completed_tasks": [
+        {
+          "name": "PLY format",
+          "status": "complete",
+          "notes": "official read/write; compressed PLY and RGB stubs"
+        },
+        {
+          "name": "Splat format",
+          "status": "complete",
+          "notes": "32-byte/splat read/write, no SH"
+        },
+        {
+          "name": "SPX format",
+          "status": "complete",
+          "notes": "v3 read/write with WebP+gzip blocks and SH palette (v1/v2 pending)"
+        },
+        {
+          "name": "SPZ format",
+          "status": "complete",
+          "notes": "read v2/v3/v4, write v2/v3 (gzip) and v4 (zstd per-stream), SH 0-3"
+        },
+        {
+          "name": "SOG format",
+          "status": "complete",
+          "notes": "read v1/v2, write v2 (WebP means/scales/quats/sh0, JSON meta, .sog zip), SH not yet in write"
+        },
+        {
+          "name": "KSplat format",
+          "status": "complete",
+          "notes": "read only, version 0.1, compression modes 0/1/2, bucket organization"
+        },
+        {
+          "name": "GLB format",
+          "status": "complete",
+          "notes": "read/write KHR_gaussian_splatting (SH 0-3), write/read KHR_gaussian_splatting_compression_spz_2, read com_github_gotoeasy_gsbox_webp_rgb_ply"
+        }
+      ]
+    },
+    "phase_4": {
+      "name": "Advanced Features",
+      "status": "complete",
+      "completed_tasks": [
+        {
+          "name": "K-Means SH clustering",
+          "status": "complete",
+          "notes": "fast dedup path + scipy cKDTree BBF + vectorized assign; supports sh degree 1/2/3, palette size auto"
+        },
+        {
+          "name": "Rewrite SH by K-Means",
+          "status": "complete",
+          "notes": "rewrites SplatData.sh to clustered centroids, sets palette_idx; generates labels image for SOG"
+        },
+        {
+          "name": "Model simplify (voxelization + Gaussian merge)",
+          "status": "complete",
+          "notes": "alpha filter, importance sort, voxel bucketing, neighbor similarity, covariance-aware 2-splat merge via 3x3 eigendecomposition"
+        },
+        {
+          "name": "B-Tree LOD spatial split",
+          "status": "complete",
+          "notes": "longest-axis median split, cut_size leaf threshold, per-LOD counts, TileMapping per leaf"
+        },
+        {
+          "name": "SplatTiles + LodMeta builder",
+          "status": "complete",
+          "notes": "collects per-LOD merged SplatFile from leaf tiles, builds SplatNode tree + LodNode tree, JSON roundtrip"
+        }
+      ]
+    },
+    "phase_5": {
+      "name": "CLI and Engineering",
+      "status": "in_progress",
+      "tasks": {
+        "basic_cli": "complete",
+        "full_cli": "not_started"
+      }
+    }
+  },
+  "test_status": "28/28 tests passing",
+  "new_tests": [
+    "test_spz_v3_roundtrip",
+    "test_spz_v4_roundtrip",
+    "test_glb_roundtrip",
+    "test_glb_sh3_roundtrip",
+    "test_sog_roundtrip",
+    "test_kmeans_fast_path",
+    "test_kmeans_with_duplicates",
+    "test_rewrite_sh_by_kmeans",
+    "test_simplify_basic",
+    "test_simplify_low_alpha_filter",
+    "test_btree_build",
+    "test_lod_tiles_and_meta",
+    "test_lod_meta_json_roundtrip",
+    "test_btree_single_tile"
+  ],
+  "next_steps": [
+    "Phase 5: Add comprehensive CLI with all conversion commands",
+    "Phase 5: PyInstaller/pip packable release",
+    "Phase 5: Performance benchmark vs Go implementation",
+    "SOG v2 writer: implement SH centroid/labels WebP write using kmeans output",
+    "PLY: add compressed PLY and RGB PLY readers",
+    "SPX: add v1 and v2 read/write",
+    "Add vectorized PLY read (replace per-row loop with numpy structured bytes)",
+    "Add full SplatData simplification pipeline + LOD build CLI commands"
+  ],
+  "notes": {
+    "key_decision": "NumPy columnar SplatData for million-point performance",
+    "position_precision": "SPX uses log encoding for positions, roundtrip has ~0.01 tolerance atol",
+    "pending_optimization": "Transform rotation loop should be vectorized",
+    "dependency_note": "SPZ v4 requires zstandard; SOG requires Pillow; KSplat has no write path",
+    "phase4_note": "scipy optional (falls back to NumPy if unavailable)"
+  }
+}

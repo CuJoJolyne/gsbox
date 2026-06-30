@@ -1,0 +1,2 @@
+[console_scripts]
+pygsbox = pygsbox.cli:main

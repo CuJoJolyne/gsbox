@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pygsbox"
+version = "4.8.4"
+description = "Python implementation of gsbox - 3D Gaussian Splatting format conversion toolkit"
+readme = "pygsbox/README.md"
+license = { text = "MIT" }
+authors = [{ name = "pygsbox contributors" }]
+keywords = ["3dgs", "gaussian-splatting", "ply", "spz", "spx", "sog", "glb", "3d"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+]
+# Optional dependencies:
+#   Pillow>=10.0      - WebP support (SOG, SPX WebP blocks)
+#   zstandard>=0.21   - Zstd compression (SPZ v4)
+#   scipy>=1.10       - cKDTree acceleration for K-Means clustering
+
+[project.optional-dependencies]
+webp = ["Pillow>=10.0"]
+zstd = ["zstandard>=0.21"]
+scipy = ["scipy>=1.10"]
+full = ["Pillow>=10.0", "zstandard>=0.21", "scipy>=1.10"]
+
+[project.scripts]
+pygsbox = "pygsbox.cli:main"
+benchmark = "pygsbox.benchmark:main"
+
+[project.urls]
+Homepage = "https://github.com/gotoeasy/gsbox"
+Repository = "https://github.com/gotoeasy/gsbox"
+
+[tool.setuptools.packages.find]
+include = ["pygsbox*"]
+
+[tool.setuptools.package-data]
+pygsbox = ["*.md", "*.json"]
+"*" = ["*.spec"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+exclude = [
+    "numpy/",
+]

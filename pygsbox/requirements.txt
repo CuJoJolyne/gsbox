@@ -1,0 +1,4 @@
+numpy>=1.24
+Pillow>=10.0          # WebP support (SOG format, SPX WebP blocks)
+zstandard>=0.21       # Zstd compression (SPZ v4)
+scipy>=1.10           # cKDTree acceleration (K-Means clustering)
