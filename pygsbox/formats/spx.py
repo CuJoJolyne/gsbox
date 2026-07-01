@@ -545,7 +545,7 @@ def _decompress_block_data(f, size: int, compress_type: int) -> bytes:
 
 def _read_spx_v3_block(payload: bytes, count: int, format_id: int) -> SplatData:
     channels = _decode_channels_from_interleaved(payload, count)
-    return _decode_splat_from_channels(channels, count)
+    return _decode_splat_from_channels(channels, count, format_id)
 
 
 def _read_spx_webp_v3_block(payload: bytes, count: int, format_id: int) -> SplatData:
@@ -618,7 +618,7 @@ def _read_spx_webp_v3_block(payload: bytes, count: int, format_id: int) -> Splat
     ch7[:min(len(flag_raw), count * 2)] = flag_raw[:min(len(flag_raw), count * 2)]
 
     channels = [ch0, ch1, ch2, ch3, ch4, ch5, ch6, ch7]
-    return _decode_splat_from_channels(channels, count)
+    return _decode_splat_from_channels(channels, count, format_id)
 
 
 def _extract_pos_channel_from_image(img_data: bytes, count: int, byte_idx: int) -> np.ndarray:
@@ -689,8 +689,9 @@ def _decode_channels_from_interleaved(payload: bytes, count: int) -> List[np.nda
     return [ch0, ch1, ch2, ch3, ch4, ch5, ch6, ch7]
 
 
-def _decode_splat_from_channels(channels: List[np.ndarray], count: int) -> SplatData:
+def _decode_splat_from_channels(channels: List[np.ndarray], count: int, format_id: int = 0) -> SplatData:
     data = SplatData(count)
+    need_log = format_id in (BF_SPLAT22, BF_SPLAT220_WEBP)
 
     ch0, ch1, ch2 = channels[0], channels[1], channels[2]
     ch3 = channels[3]
@@ -707,6 +708,10 @@ def _decode_splat_from_channels(channels: List[np.ndarray], count: int) -> Splat
         z = codec.decode_spx_position_uint24(
             int(ch0[i * 3 + 2]), int(ch1[i * 3 + 2]), int(ch2[i * 3 + 2])
         )
+        if need_log:
+            x = codec.decode_log(x, 1)
+            y = codec.decode_log(y, 1)
+            z = codec.decode_log(z, 1)
         data.position[i, 0] = x
         data.position[i, 1] = y
         data.position[i, 2] = z
