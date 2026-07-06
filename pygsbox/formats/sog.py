@@ -148,6 +148,10 @@ def read_sog(sog_or_meta_path: str) -> Tuple[SogHeader, SplatData]:
 
 
 def _read_sog_v1(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
+    assert meta.means is not None
+    assert meta.scales is not None
+    assert meta.quats is not None
+    assert meta.sh0 is not None
     meansl, _ = _read_webp_rgba(dir_path, meta.means.files[0])
     meansu, _ = _read_webp_rgba(dir_path, meta.means.files[1])
     scales, _ = _read_webp_rgba(dir_path, meta.scales.files[0])
@@ -204,7 +208,6 @@ def _read_sog_v1(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
         data.scale[i, 1] = meta.scales.mins[1] + (meta.scales.maxs[1] - meta.scales.mins[1]) * sy
         data.scale[i, 2] = meta.scales.mins[2] + (meta.scales.maxs[2] - meta.scales.mins[2]) * sz
 
-        data.rotation[i] = list(meta.quats.files) or [128, 128, 128, 128]
         data.rotation[i] = list(codec.sog_decode_rotations(
             quats[i * 4 + 0], quats[i * 4 + 1],
             quats[i * 4 + 2], quats[i * 4 + 3]
@@ -220,6 +223,7 @@ def _read_sog_v1(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
         data.color[i, 3] = codec.encode_splat_opacity(a)
 
         if sh_degree > 0 and len(labels_data) > 0:
+            assert meta.shN is not None
             label = labels_data[i * 4 + 0] | (labels_data[i * 4 + 1] << 8)
             col = label & 63
             row = label >> 6
@@ -247,6 +251,10 @@ def _read_sog_v1(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
 
 
 def _read_sog_v2(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
+    assert meta.means is not None
+    assert meta.scales is not None
+    assert meta.quats is not None
+    assert meta.sh0 is not None
     meansl, _ = _read_webp_rgba(dir_path, meta.means.files[0])
     meansu, _ = _read_webp_rgba(dir_path, meta.means.files[1])
     scales, _ = _read_webp_rgba(dir_path, meta.scales.files[0])
@@ -317,6 +325,7 @@ def _read_sog_v2(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
         data.color[i, 3] = a_val
 
         if sh_degree > 0 and len(labels_data) > 0:
+            assert meta.shN is not None
             sh_dims = [0, 3, 8, 15]
             sh_dim = sh_dims[sh_degree]
             label = labels_data[i * 4 + 0] | (labels_data[i * 4 + 1] << 8)
@@ -473,6 +482,7 @@ def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int) -> Tuple[List
     if centroids is None or palette_size == 0:
         return [], 0
 
+    assert labels is not None
     centroids_rgba = bytearray(palette_size * sh_dim * 4)
     for i in range(palette_size):
         base = i * sh_dim * 4

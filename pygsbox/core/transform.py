@@ -18,7 +18,7 @@ class Quaternion:
         return cls(axis[0] * s, axis[1] * s, axis[2] * s, np.cos(half_angle))
 
     def length(self) -> float:
-        return np.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2 + self.w ** 2)
+        return np.sqrt(self.x ** 2 + self.y ** 2 + self.z ** 2 + self.w ** 2)  # type: ignore[no-any-return]
 
     def normalize(self) -> 'Quaternion':
         l = self.length()

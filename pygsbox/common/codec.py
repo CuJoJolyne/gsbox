@@ -33,7 +33,7 @@ def clip_uint16(val: float) -> int:
 
 
 def clip_float32(val: float) -> float:
-    return float(max(-np.finfo(np.float32).max, min(np.finfo(np.float32).max, val)))
+    return float(float(max(-np.finfo(np.float32).max, min(np.finfo(np.float32).max, val))))  # type: ignore[arg-type]
 
 
 def clip_uint8_round(val: float) -> int:
@@ -100,17 +100,17 @@ def decode_float16(encoded: int) -> float:
         final_exp = exp + 127
         final_mantissa = m << 13
         bits = (sign_bit << 31) | (final_exp << 23) | final_mantissa
-        return struct.unpack('f', struct.pack('I', bits))[0]
+        return float(struct.unpack('f', struct.pack('I', bits))[0])
 
     if exponent == 0x1f:
         if mantissa == 0:
-            return -np.finfo(np.float32).max if sign_bit == 1 else np.finfo(np.float32).max
+            return float(-np.finfo(np.float32).max) if sign_bit == 1 else float(np.finfo(np.float32).max)
         return float('nan')
 
     final_exp = exponent - 15 + 127
     final_mantissa = mantissa << 13
     bits = (sign_bit << 31) | (final_exp << 23) | final_mantissa
-    return struct.unpack('f', struct.pack('I', bits))[0]
+    return float(struct.unpack('f', struct.pack('I', bits))[0])
 
 
 def spz_encode_position(val: float) -> bytes:
@@ -240,9 +240,9 @@ def encode_splat_opacity(val: float) -> int:
 def decode_splat_opacity(val: int) -> float:
     v = val / 255.0
     if v >= 1.0:
-        return np.finfo(np.float32).max
+        return float(np.finfo(np.float32).max)
     if v <= 0.0:
-        return -np.finfo(np.float32).max
+        return float(-np.finfo(np.float32).max)
     return clip_float32(-math.log((1.0 / v) - 1.0))
 
 

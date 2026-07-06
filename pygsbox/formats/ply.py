@@ -258,7 +258,7 @@ def _read_compressed_ply_data(file_path: str, header: PlyHeader) -> SplatData:
     chunks = _parse_compressed_chunks(file_path, header, chunk_count, chunk_hdr_size)
     data = _parse_compressed_splats(file_path, header, chunk_count, chunk_hdr_size, chunks, splat_size)
     _parse_compressed_sh(file_path, header, chunk_count, chunk_hdr_size, splat_size, data)
-    return data
+    return data  # type: ignore[no-any-return]
 
 
 def _parse_compressed_chunks(file_path, header, chunk_count, chunk_hdr_size):
@@ -401,6 +401,175 @@ def _parse_compressed_sh(file_path, header, chunk_count, chunk_hdr_size, splat_s
                     val = (float(sh_bytes[j + c * sh_dim]) / 256.0 - 0.5) * 8.0
                     data.sh[i, n] = codec.encode_splat_sh(val)
                     n += 1
+
+
+# ---- Compressed PLY writer ----
+
+CHUNK_SPLATS = 256
+
+
+def _pack_111011(value: float, min_v: float, max_v: float, bits: int) -> int:
+    r = max(0.0, min(1.0, (value - min_v) / (max_v - min_v if max_v != min_v else 1.0)))
+    return int(r * ((1 << bits) - 1) + 0.5)
+
+
+def _pack_position_xyz(px: float, py: float, pz: float, ch: _CompressedChunk) -> int:
+    x = _pack_111011(px, ch.min_x, ch.max_x, 11)
+    y = _pack_111011(py, ch.min_y, ch.max_y, 10)
+    z = _pack_111011(pz, ch.min_z, ch.max_z, 11)
+    return (x << 21) | (y << 11) | z
+
+
+def _pack_scale(sx: float, sy: float, sz: float, ch: _CompressedChunk) -> int:
+    x = _pack_111011(sx, ch.min_scale_x, ch.max_scale_x, 11)
+    y = _pack_111011(sy, ch.min_scale_y, ch.max_scale_y, 10)
+    z = _pack_111011(sz, ch.min_scale_z, ch.max_scale_z, 11)
+    return (x << 21) | (y << 11) | z
+
+
+def _pack_rotations(rw: int, rx: int, ry: int, rz: int) -> int:
+    r0 = rw / 128.0 - 1.0
+    r1 = rx / 128.0 - 1.0
+    r2 = ry / 128.0 - 1.0
+    r3 = rz / 128.0 - 1.0
+    qlen = math.sqrt(r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3)
+    if qlen > 0:
+        r0 /= qlen; r1 /= qlen; r2 /= qlen; r3 /= qlen
+    rots = [r0, r1, r2, r3]
+    idx = max(range(4), key=lambda i: abs(rots[i]))
+    packed = idx << 30
+    bitpos = 0
+    for i in [3, 2, 1, 0]:
+        if i != idx:
+            v = int((rots[i] * SQRT1_2 + 0.5) * 1023 + 0.5)
+            packed |= (max(0, min(1023, v)) << bitpos)
+            bitpos += 10
+    return packed
+
+
+def _pack_rgba(r: int, g: int, b: int, a: int,
+               ch: _CompressedChunk) -> int:
+    cr = r / 255.0; cg = g / 255.0; cb = b / 255.0; ca = a / 255.0
+    pr = int(max(0.0, min(1.0, (codec.decode_splat_color(r) - ch.min_r) / (ch.max_r - ch.min_r))) * 255.0 + 0.5)
+    pg = int(max(0.0, min(1.0, (codec.decode_splat_color(g) - ch.min_g) / (ch.max_g - ch.min_g))) * 255.0 + 0.5)
+    pb = int(max(0.0, min(1.0, (codec.decode_splat_color(b) - ch.min_b) / (ch.max_b - ch.min_b))) * 255.0 + 0.5)
+    pa = min(255, int(ca * 255.0 + 0.5))
+    return (max(0, min(255, pr)) << 24) | (max(0, min(255, pg)) << 16) | (max(0, min(255, pb)) << 8) | pa
+
+
+def _make_chunk(data: SplatData, start: int, end: int) -> _CompressedChunk:
+    ch = _CompressedChunk()
+    sub = data.position[start:end]
+    ch.min_x = float(np.min(sub[:, 0]))
+    ch.max_x = float(np.max(sub[:, 0]))
+    ch.min_y = float(np.min(sub[:, 1]))
+    ch.max_y = float(np.max(sub[:, 1]))
+    ch.min_z = float(np.min(sub[:, 2]))
+    ch.max_z = float(np.max(sub[:, 2]))
+    sub_s = np.exp(data.scale[start:end].astype(np.float64))
+    ch.min_scale_x = float(np.min(sub_s[:, 0]))
+    ch.max_scale_x = float(np.max(sub_s[:, 0]))
+    ch.min_scale_y = float(np.min(sub_s[:, 1]))
+    ch.max_scale_y = float(np.max(sub_s[:, 1]))
+    ch.min_scale_z = float(np.min(sub_s[:, 2]))
+    ch.max_scale_z = float(np.max(sub_s[:, 2]))
+    rgb = np.array([
+        codec.decode_splat_color(int(c)) for c in data.color[start:end, 0]
+    ])
+    ch.min_r = float(np.min(data.color[start:end, 0].astype(np.float32) / 255.0))
+    ch.max_r = float(np.max(data.color[start:end, 0].astype(np.float32) / 255.0))
+    ch.min_g = float(np.min(data.color[start:end, 1].astype(np.float32) / 255.0))
+    ch.max_g = float(np.max(data.color[start:end, 1].astype(np.float32) / 255.0))
+    ch.min_b = float(np.min(data.color[start:end, 2].astype(np.float32) / 255.0))
+    ch.max_b = float(np.max(data.color[start:end, 2].astype(np.float32) / 255.0))
+
+    eps = 0.001
+    if ch.max_x - ch.min_x < eps: ch.max_x = ch.min_x + eps
+    if ch.max_y - ch.min_y < eps: ch.max_y = ch.min_y + eps
+    if ch.max_z - ch.min_z < eps: ch.max_z = ch.min_z + eps
+    if ch.max_scale_x - ch.min_scale_x < eps: ch.max_scale_x = ch.min_scale_x + eps
+    if ch.max_scale_y - ch.min_scale_y < eps: ch.max_scale_y = ch.min_scale_y + eps
+    if ch.max_scale_z - ch.min_scale_z < eps: ch.max_scale_z = ch.min_scale_z + eps
+    if ch.max_r - ch.min_r < eps: ch.max_r = ch.min_r + eps
+    if ch.max_g - ch.min_g < eps: ch.max_g = ch.min_g + eps
+    if ch.max_b - ch.min_b < eps: ch.max_b = ch.min_b + eps
+    return ch
+
+
+def _gen_compressed_ply_header(chunk_count: int, vertex_count: int,
+                               sh_degree: int = 0, comment: str = "") -> str:
+    lines = ["ply", "format binary_little_endian 1.0"]
+    if comment:
+        lines.append(f"comment {comment}")
+    lines.append(f"element chunk {chunk_count}")
+    for prop in ("min_x", "min_y", "min_z", "max_x", "max_y", "max_z",
+                 "min_scale_x", "min_scale_y", "min_scale_z",
+                 "max_scale_x", "max_scale_y", "max_scale_z",
+                 "min_r", "min_g", "min_b", "max_r", "max_g", "max_b"):
+        lines.append(f"property float {prop}")
+    lines.append(f"element vertex {vertex_count}")
+    lines.extend((
+        "property uint packed_position",
+        "property uint packed_rotation",
+        "property uint packed_scale",
+        "property uint packed_color",
+    ))
+    if sh_degree > 0:
+        sh_count = {1: 9, 2: 24, 3: 45}[sh_degree]
+        for i in range(sh_count):
+            lines.append(f"property float f_rest_{i}")
+    lines.append("end_header\n")
+    return "\n".join(lines)
+
+
+def write_compressed_ply(file_path: str, data: SplatData,
+                         sh_degree: int = 0, comment: str = ""):
+    os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
+    n = data.count
+    chunk_count = max(1, (n + CHUNK_SPLATS - 1) // CHUNK_SPLATS)
+
+    header_text = _gen_compressed_ply_header(chunk_count, n, sh_degree, comment)
+    header_bytes = header_text.encode('ascii')
+
+    with open(file_path, 'wb') as f:
+        f.write(header_bytes)
+
+        for ci in range(chunk_count):
+            s = ci * CHUNK_SPLATS
+            e = min(s + CHUNK_SPLATS, n)
+            ch = _make_chunk(data, s, e)
+            for attr in ("min_x", "min_y", "min_z", "max_x", "max_y", "max_z",
+                         "min_scale_x", "min_scale_y", "min_scale_z",
+                         "max_scale_x", "max_scale_y", "max_scale_z",
+                         "min_r", "min_g", "min_b", "max_r", "max_g", "max_b"):
+                f.write(struct.pack('<f', getattr(ch, attr)))
+
+        for ci in range(chunk_count):
+            s = ci * CHUNK_SPLATS
+            e = min(s + CHUNK_SPLATS, n)
+            ch = _make_chunk(data, s, e)
+            for i in range(s, e):
+                pk_pos = _pack_position_xyz(
+                    float(data.position[i, 0]), float(data.position[i, 1]),
+                    float(data.position[i, 2]), ch)
+                pk_rot = _pack_rotations(
+                    int(data.rotation[i, 0]), int(data.rotation[i, 1]),
+                    int(data.rotation[i, 2]), int(data.rotation[i, 3]))
+                pk_scl = _pack_scale(
+                    float(data.scale[i, 0]), float(data.scale[i, 1]),
+                    float(data.scale[i, 2]), ch)
+                pk_col = _pack_rgba(
+                    int(data.color[i, 0]), int(data.color[i, 1]),
+                    int(data.color[i, 2]), int(data.color[i, 3]), ch)
+                f.write(struct.pack('<IIII', pk_pos, pk_rot, pk_scl, pk_col))
+
+        if sh_degree > 0:
+            sh_dim = {1: 3, 2: 8, 3: 15}[sh_degree]
+            for i in range(n):
+                for j in range(sh_dim):
+                    for c in range(3):
+                        val = int(data.sh[i, j + c * sh_dim])
+                        f.write(bytes([val]))
 
 
 def _read_rgb_ply_data(file_path: str, header: PlyHeader) -> SplatData:

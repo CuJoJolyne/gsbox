@@ -95,7 +95,7 @@ def encode_morton3(positions: np.ndarray, mm: V3MinMax) -> np.ndarray:
                   np.minimum(1023, np.floor(1024.0 * np.maximum(0, z - mm.min_z) / mm.len_z).astype(np.uint32)),
                   0).astype(np.uint32)
 
-    return (part1_by2(iz) << 2) + (part1_by2(iy) << 1) + part1_by2(ix)
+    return (part1_by2(iz) << 2) + (part1_by2(iy) << 1) + part1_by2(ix)  # type: ignore[no-any-return]
 
 
 def sort_morton(data: splat_data.SplatData):

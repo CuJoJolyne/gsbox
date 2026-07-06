@@ -382,6 +382,7 @@ def test_rewrite_sh_by_kmeans():
     data.sh = np.random.randint(0, 256, (N, 45), dtype=np.uint8)
     centroids, labels, ps = kmeans.rewrite_sh_by_kmeans(data, sh_degree=1, iterations=2)
     assert ps > 0
+    assert centroids is not None
     assert np.array_equal(data.sh, centroids[labels])
     print("PASS")
 

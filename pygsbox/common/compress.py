@@ -83,7 +83,7 @@ def decompress_webp(data: bytes) -> tuple:
 
     buf = io.BytesIO(data)
     img = Image.open(buf)
-    img = img.convert("RGBA")
+    img = img.convert("RGBA")  # type: ignore[assignment]
     width, height = img.size
     rgba_data = img.tobytes("raw", "RGBA")
     return rgba_data, width, height

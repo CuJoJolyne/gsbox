@@ -1,7 +1,7 @@
 import math
 import json
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from ..core.splat_data import SplatData
 from ..core.morton import V3MinMax, compute_xyz_min_max, sort_morton
@@ -248,7 +248,8 @@ def build_tiles_from_btree(data: SplatData, root: BTreeNode, lod_levels: int,
             lod_lods.file_key = file_key
             lod_lods.offset = offset
             lod_lods.count = leaf.lod_counts[lod]
-            splat_file.datas.append(leaf.data)
+            if splat_file.datas is not None and leaf.data is not None:
+                splat_file.datas.append(leaf.data)
             offset += lod_lods.count
 
         files.append(splat_file)
@@ -293,7 +294,7 @@ def _copy_to_splat_tree(bnode: BTreeNode, snode: SplatNode) -> None:
     snode.center = [bnode.mm.center_x, bnode.mm.center_y, bnode.mm.center_z]
     snode.radius = bnode.mm.radius
     if bnode.is_leaf:
-        snode.lods = bnode.lods
+        snode.lods = [t for t in bnode.lods if t is not None]  # type: ignore[assignment]
         snode.bound = bnode.bound
     else:
         snode.children = []
@@ -355,12 +356,13 @@ def _lod_node_to_dict(node: LodNode) -> dict:
     if node.bound is not None:
         d["bound"] = {"min": node.bound.min, "max": node.bound.max}
     if node.lods is not None:
-        d["lods"] = {
+        json_lods: Any = {
             k: {"file": v.file, "offset": v.offset, "count": v.count}
             for k, v in node.lods.items()
         }
+        d["lods"] = json_lods
     if node.children is not None:
-        d["children"] = [_lod_node_to_dict(c) for c in node.children]
+        d["children"] = [_lod_node_to_dict(c) for c in node.children]  # type: ignore[assignment]
     return d
 
 

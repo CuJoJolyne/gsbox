@@ -74,7 +74,7 @@ def _build_sigma(scale_xyz: np.ndarray, quat_n: np.ndarray) -> np.ndarray:
     w, x, y, z = float(quat_n[3]), float(quat_n[0]), float(quat_n[1]), float(quat_n[2])
     R = _quat_to_mat3(w, x, y, z)
     D = np.diag(scale_xyz * scale_xyz)
-    return R @ D @ R.T
+    return R @ D @ R.T  # type: ignore[no-any-return]
 
 
 def _merge_two(pos_a, pos_b, color_a, color_b, scale_a, scale_b, rot_a, rot_b,

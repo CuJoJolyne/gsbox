@@ -2,13 +2,14 @@
 import sys
 import os
 import time
-from typing import Optional
+from typing import Optional, Any, Dict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pygsbox.common import version
 from pygsbox.common.file_utils import file_ext_name, is_net_file, read_remote_to_local
 from pygsbox.common.progress import Progress, default_callback
+from pygsbox.common.version_check import check_update
 from pygsbox.formats import ply, splat, spx, spz, sog, ksplat, glb, obj
 from pygsbox.advanced import simplify as simp_module, lod as lod_module, autocut
 from pygsbox.core import splat_data, morton, transform
@@ -25,7 +26,8 @@ def usage():
     print("  simplify       Voxel-based model simplification")
     print("  lod            Build LOD B-Tree tiles")
     print("  obj            Transform vertices in .obj file")
-    print("  autocut        Auto LOD generation (simplify x5 + B-Tree)\n")
+    print("  autocut        Auto LOD generation (simplify x5 + B-Tree)")
+    print("  check_update   Check for latest pygsbox release")
     print("  Shortcut commands (same as convert):")
     print("    p2s, ply2splat     p2z, ply2spz     p2g, ply2glb")
     print("    z2p, spz2ply       z2g, spz2glb     g2p, glb2ply\n")
@@ -52,8 +54,8 @@ def usage():
     print()
 
 
-def parse_args(argv):
-    args = {}
+def parse_args(argv) -> Dict[str, Any]:
+    args: Dict[str, Any] = {}
     i = 1
     while i < len(argv):
         a = argv[i]
@@ -76,7 +78,7 @@ def parse_args(argv):
             if cmd in ('z2g',): cmd = 'spz2glb'
             if cmd in ('g2z',): cmd = 'glb2spz'
             args['command'] = cmd
-        elif a in ('info', 'simplify', 'lod', 'obj', 'autocut'):
+        elif a in ('info', 'simplify', 'lod', 'obj', 'autocut', 'check_update'):
             args['command'] = a
         elif a in ('-i', '--input'):
             i += 1; args['input'] = argv[i] if i < len(argv) else ''
@@ -122,6 +124,7 @@ def _read_file(path: str):
         path = read_remote_to_local(path)
         print("[Info] Download complete")
     ext = file_ext_name(path).lower()
+    hdr: Any = None
     if ext == '.ply':
         hdr, data = ply.read_ply(path)
         return data, hdr.max_sh_degree() if hdr else 0
@@ -297,9 +300,10 @@ def cmd_info(args):
     print(f"Size: {os.path.getsize(in_path) / 1024 / 1024:.2f} MB")
 
     ext = file_ext_name(in_path).lower()
+    hdr: Any = None
     try:
         if ext == '.ply':
-            hdr, data = ply.read_ply(in_path)
+            hdr, data = ply.read_ply(in_path)  # type: ignore[assignment]
             t = "Compressed PLY" if hdr.is_compressed_ply() else ("RGB PLY" if hdr.is_rgb_ply() else "3DGS PLY")
             print(f"Format: {t}\nVertex count: {data.count}\nSH degree: {hdr.max_sh_degree()}")
             if hdr.comment:
@@ -352,6 +356,8 @@ def main():
         cmd_obj(args)
     elif cmd == 'autocut':
         cmd_autocut(args)
+    elif cmd == 'check_update':
+        print(check_update())
     elif cmd in ('convert', 'ply2splat', 'splat2ply', 'ply2spz', 'spz2ply',
                  'ply2glb', 'glb2ply', 'spz2glb', 'glb2spz', 'ply2ply'):
         cmd_convert(args)
