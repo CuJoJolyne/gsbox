@@ -58,6 +58,7 @@ def kmeans_sh(data: SplatData, sh_degree: int,
         centroids, labels = fast
         return centroids, labels, len(centroids)
 
+    # Fast overflow path: random subsample centroids, single-pass assign
     log2_ratio = math.log2(max(1, n / 1024.0))
     palette_size = int(min(64, max(1, 2 ** math.floor(log2_ratio))) * 1024)
     palette_size = min(palette_size, max(1, n))
@@ -65,13 +66,18 @@ def kmeans_sh(data: SplatData, sh_degree: int,
     shs_uint8 = get_sh_for_kmeans(data, quality)
     shs_f32 = sh_to_float32(shs_uint8)[:, :dim]
 
+    rng = np.random.default_rng(0)
+    idx = rng.choice(n, size=palette_size, replace=False)
+    centroids_f32 = shs_f32[idx].astype(np.float32)
+
     try:
         from scipy.spatial import cKDTree
-        centroids_f32, labels = _kmeans_with_scipy(
-            shs_f32, palette_size, iterations, max_bbf_nodes
-        )
+        tree = cKDTree(centroids_f32)
+        _, labels = tree.query(shs_f32, k=1)
+        labels = labels.astype(np.int32)
     except ImportError:
-        centroids_f32, labels = _kmeans_basic(shs_f32, palette_size, iterations)
+        diffs = shs_f32[:, None, :] - centroids_f32[None, :, :]
+        labels = np.argmin(np.sum(diffs * diffs, axis=2), axis=1).astype(np.int32)
 
     centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)
     centroids_uint8[:, :dim] = sh_float32_to_uint8(centroids_f32)
