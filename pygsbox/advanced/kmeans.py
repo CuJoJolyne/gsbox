@@ -45,7 +45,7 @@ def try_fast_clustering(data: SplatData, dim: int) -> Optional[Tuple[np.ndarray,
 
 
 def kmeans_sh(data: SplatData, sh_degree: int,
-              iterations: int = 5, max_bbf_nodes: int = 16,
+              iterations: int = 10, max_bbf_nodes: int = 15,
               quality: int = 9) -> Tuple[np.ndarray, np.ndarray, int]:
     dim = SH_DIMS[sh_degree]
     n = data.count
@@ -58,26 +58,77 @@ def kmeans_sh(data: SplatData, sh_degree: int,
         centroids, labels = fast
         return centroids, labels, len(centroids)
 
-    # Fast overflow path: random subsample centroids, single-pass assign
     log2_ratio = math.log2(max(1, n / 1024.0))
     palette_size = int(min(64, max(1, 2 ** math.floor(log2_ratio))) * 1024)
     palette_size = min(palette_size, max(1, n))
 
     shs_uint8 = get_sh_for_kmeans(data, quality)
-    shs_f32 = sh_to_float32(shs_uint8)[:, :dim]
+    shs_f32 = sh_to_float32(shs_uint8)
+    shs_dim = shs_f32[:, :dim].astype(np.float32)
 
+    # 1. Random unique init (match Go: allow dupes after maxFaildCnt)
     rng = np.random.default_rng(0)
-    idx = rng.choice(n, size=palette_size, replace=False)
-    centroids_f32 = shs_f32[idx].astype(np.float32)
+    centroids_f32 = np.zeros((palette_size, 45), dtype=np.float32)
+    used = set()
+    i = 0
+    max_fail = max(palette_size // 20, 1000)
+    fail_cnt = 0
+    while i < palette_size:
+        idx = rng.integers(0, n)
+        if idx not in used or fail_cnt >= max_fail:
+            used.add(idx)
+            centroids_f32[i] = shs_f32[idx]
+            i += 1
+        else:
+            fail_cnt += 1
 
+    labels = np.zeros(n, dtype=np.int32)
+
+    from ..common.progress import Progress, PHASE_KMEANS
     try:
-        from scipy.spatial import cKDTree
-        tree = cKDTree(centroids_f32)
-        _, labels = tree.query(shs_f32, k=1)
-        labels = labels.astype(np.int32)
+        from scipy.spatial import cKDTree as KdTree
     except ImportError:
-        diffs = shs_f32[:, None, :] - centroids_f32[None, :, :]
-        labels = np.argmin(np.sum(diffs * diffs, axis=2), axis=1).astype(np.int32)
+        KdTree = None
+
+    for it in range(iterations):
+        Progress.report(PHASE_KMEANS, it, iterations)
+
+        # 2. Build KD-Tree from centroids (only dim dimensions)
+        if KdTree is not None:
+            tree = KdTree(centroids_f32[:, :dim])
+            _, labels = tree.query(shs_dim, k=1)
+            labels = labels.astype(np.int32)
+        else:
+            diffs = shs_dim[:, None, :] - centroids_f32[None, :, :dim]
+            labels = np.argmin(np.sum(diffs * diffs, axis=2), axis=1).astype(np.int32)
+
+        # 3. Compute new centroids (only dim dimensions + full 45 for init)
+        new_centroids = np.zeros((palette_size, 45), dtype=np.float32)
+        counts = np.zeros(palette_size, dtype=np.int32)
+        for d in range(dim):
+            np.add.at(new_centroids[:, d], labels, shs_f32[:, d])
+        np.add.at(counts, labels, 1)
+
+        # 4. Handle empty clusters: re-init from random data point
+        for c in range(palette_size):
+            if counts[c] == 0:
+                ridx = rng.integers(0, n)
+                new_centroids[c] = shs_f32[ridx]
+            else:
+                for d in range(dim):
+                    new_centroids[c, d] /= float(counts[c])
+                # keep existing values for dim..45
+                new_centroids[c, dim:] = centroids_f32[c, dim:]
+
+        centroids_f32 = new_centroids
+
+    Progress.done(PHASE_KMEANS, iterations)
+
+    # 5. Convert float32 → uint8, zero out dim..45
+    centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)
+    centroids_uint8[:, :dim] = sh_float32_to_uint8(centroids_f32[:, :dim])
+
+    return centroids_uint8, labels.astype(np.int32), palette_size
 
     centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)
     centroids_uint8[:, :dim] = sh_float32_to_uint8(centroids_f32)
@@ -153,7 +204,7 @@ def _kmeans_basic(shs_f32: np.ndarray, palette_size: int,
 
 
 def rewrite_sh_by_kmeans(data: SplatData, sh_degree: int,
-                         iterations: int = 5, quality: int = 9
+                         iterations: int = 10, quality: int = 9
                          ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], int]:
     if sh_degree == 0 or data.count == 0:
         return None, None, 0
