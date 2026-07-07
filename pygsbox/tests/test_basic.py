@@ -487,6 +487,94 @@ def test_btree_single_tile():
     print("PASS")
 
 
+def test_compress_gzip_roundtrip():
+    """Test gzip compress/decompress roundtrip."""
+    print("Test: Gzip roundtrip...", end=" ")
+    from pygsbox.common.compress import compress_gzip, decompress_gzip
+    original = b"hello world " * 100
+    assert decompress_gzip(compress_gzip(original)) == original
+    print("PASS")
+
+
+def test_compress_webp_dimensions():
+    """Test WebP dimension calculation."""
+    print("Test: WebP dimensions...", end=" ")
+    from pygsbox.common.compress import compute_width_height
+    w, h = compute_width_height(200)
+    assert w * h * 4 >= 200
+    print("PASS")
+
+
+def test_file_utils_path():
+    """Test file extension and URL detection."""
+    print("Test: File utils path...", end=" ")
+    from pygsbox.common.file_utils import file_ext_name, is_net_file
+    assert file_ext_name("/a/b/c.ply") == ".ply"
+    assert is_net_file("https://example.com/model.spz")
+    assert not is_net_file("./local.ply")
+    print("PASS")
+
+
+def test_transform_quaternion():
+    """Test quaternion rotation of a vector."""
+    print("Test: Quaternion rotation...", end=" ")
+    from pygsbox.core.transform import Quaternion, Vector3
+    q = Quaternion.from_axis_angle((0, 0, 1), 1.5708)
+    v = Vector3(1, 0, 0)
+    rotated = v.apply_quaternion(q)
+    assert abs(rotated.x) < 0.001 and abs(rotated.y - 1.0) < 0.001
+    print("PASS")
+
+
+def test_spx_v3_roundtrip():
+    """Test SPX v3 write/read roundtrip."""
+    print("Test: SPX v3 roundtrip...", end=" ")
+    from pygsbox.formats.spx import read_spx, write_spx, BF_SPLAT220_WEBP
+    import tempfile
+    np.random.seed(42)
+    N = 100
+    data = SplatData(N)
+    data.position = np.random.randn(N, 3).astype(np.float32) * 5.0
+    data.scale = np.full((N, 3), -4.0, dtype=np.float32)
+    data.color = np.random.randint(0, 256, (N, 4), dtype=np.uint8)
+    data.rotation = np.random.randint(0, 256, (N, 4), dtype=np.uint8)
+    with tempfile.NamedTemporaryFile(suffix='.spx', delete=False) as f:
+        path = f.name
+    try:
+        write_spx(path, data, version=3, block_format=BF_SPLAT220_WEBP, quality=90)
+        hdr, decoded = read_spx(path)
+        assert hdr.version == 3
+        assert decoded.count == N
+        assert np.max(np.abs(data.position - decoded.position)) < 0.05
+    finally:
+        os.unlink(path)
+    print("PASS")
+
+
+def test_compressed_ply_roundtrip():
+    """Test compressed PLY write/read roundtrip."""
+    print("Test: Compressed PLY roundtrip...", end=" ")
+    from pygsbox.formats.ply import read_ply, write_compressed_ply
+    import tempfile
+    np.random.seed(42)
+    N = 100
+    data = SplatData(N)
+    data.position = np.random.randn(N, 3).astype(np.float32) * 5.0
+    data.scale = np.full((N, 3), -4.0, dtype=np.float32)
+    data.color = np.random.randint(0, 256, (N, 4), dtype=np.uint8)
+    data.rotation = np.random.randint(0, 256, (N, 4), dtype=np.uint8)
+    with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as f:
+        path = f.name
+    try:
+        write_compressed_ply(path, data)
+        hdr, decoded = read_ply(path)
+        assert hdr.is_compressed_ply()
+        assert decoded.count == N
+    finally:
+        os.unlink(path)
+    print("PASS")
+
+
 def run_all_tests():
     """Run all tests."""
     print("\n" + "=" * 50)
@@ -522,6 +610,12 @@ def run_all_tests():
         test_lod_tiles_and_meta,
         test_lod_meta_json_roundtrip,
         test_btree_single_tile,
+        test_compress_gzip_roundtrip,
+        test_compress_webp_dimensions,
+        test_file_utils_path,
+        test_transform_quaternion,
+        test_spx_v3_roundtrip,
+        test_compressed_ply_roundtrip,
     ]
 
     passed = 0
