@@ -354,6 +354,8 @@ def _read_sog_v2(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
 def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip: bool = True):
     os.makedirs(os.path.dirname(os.path.abspath(sog_or_json_path)) or '.', exist_ok=True)
 
+    from ..common.progress import Progress, PHASE_WRITE
+
     dir_path = file_utils.dir_name(sog_or_json_path)
     is_sog = not sog_or_json_path.lower().endswith("meta.json")
 
@@ -365,17 +367,25 @@ def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip
 
     files = []
 
+    Progress.report(PHASE_WRITE, 0, 100)
     means_files, mm = _write_sog_means(work_dir, data)
     files.extend(means_files)
+    Progress.report(PHASE_WRITE, 25, 100)
 
     files.extend(_write_sog_scales(work_dir, data))
+    Progress.report(PHASE_WRITE, 40, 100)
+
     files.extend(_write_sog_quats(work_dir, data))
+    Progress.report(PHASE_WRITE, 55, 100)
+
     files.extend(_write_sog_sh0(work_dir, data))
+    Progress.report(PHASE_WRITE, 70, 100)
 
     palette_size = 0
     if sh_degree > 0:
         shN_files, palette_size = _write_sog_shN(work_dir, data, sh_degree)
         files.extend(shN_files)
+    Progress.report(PHASE_WRITE, 85, 100)
 
     _write_sog_meta(work_dir, data, mm, palette_size, sh_degree)
     meta_file = os.path.join(work_dir, "meta.json")

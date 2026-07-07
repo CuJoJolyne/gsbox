@@ -218,7 +218,8 @@ def cmd_convert(args):
 
     data = process_data(data, args)
     print(f"[Info] Writing {data.count} splats")
-    _write_file(out_path, data, out_sh, args)
+    with Progress(callback=default_callback):
+        _write_file(out_path, data, out_sh, args)
     print(f"[Info] Done in {time.time() - t0:.2f}s")
 
 

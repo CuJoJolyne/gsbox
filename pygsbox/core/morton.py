@@ -50,19 +50,20 @@ def compute_xyz_min_max(data: splat_data.SplatData) -> V3MinMax:
 
 
 def compute_xyz_log_min_max(data: splat_data.SplatData) -> V3MinMax:
-    from ..common.codec import sog_encode_log
     result = V3MinMax()
     if data.count == 0:
         return result
-    log_x = np.array([sog_encode_log(float(x)) for x in data.position[:, 0]], dtype=np.float32)
-    log_y = np.array([sog_encode_log(float(y)) for y in data.position[:, 1]], dtype=np.float32)
-    log_z = np.array([sog_encode_log(float(z)) for z in data.position[:, 2]], dtype=np.float32)
-    result.min_x = float(np.min(log_x))
-    result.max_x = float(np.max(log_x))
-    result.min_y = float(np.min(log_y))
-    result.max_y = float(np.max(log_y))
-    result.min_z = float(np.min(log_z))
-    result.max_z = float(np.max(log_z))
+    pos = data.position
+    abs_pos = np.abs(pos)
+    log_vals = np.log(abs_pos + 1.0)
+    neg_mask = pos < 0
+    log_vals = np.where(neg_mask, -log_vals, log_vals)
+    result.min_x = float(np.min(log_vals[:, 0]))
+    result.max_x = float(np.max(log_vals[:, 0]))
+    result.min_y = float(np.min(log_vals[:, 1]))
+    result.max_y = float(np.max(log_vals[:, 1]))
+    result.min_z = float(np.min(log_vals[:, 2]))
+    result.max_z = float(np.max(log_vals[:, 2]))
     result.len_x = result.max_x - result.min_x
     result.len_y = result.max_y - result.min_y
     result.len_z = result.max_z - result.min_z
