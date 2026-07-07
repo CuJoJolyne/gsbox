@@ -27,20 +27,44 @@ def sh_float32_to_uint8(shs_f32: np.ndarray) -> np.ndarray:
 
 
 def try_fast_clustering(data: SplatData, dim: int) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Fast dedup clustering via hashing. Matches Go's tryFastClustering exactly."""
     if dim == 0:
         return None
     shs = data.sh.astype(np.uint8)
-    keys, inverse, counts = np.unique(shs[:, :dim], axis=0, return_inverse=True, return_counts=True)
-    if len(keys) > 65536:
+    n = data.count
+
+    # Use hash-based dedup (matches Go's hex.EncodeToString approach)
+    freq: dict = {}
+    sh_list = []
+    for i in range(n):
+        key = bytes(shs[i, :dim])
+        if key in freq:
+            freq[key] = (freq[key][0], freq[key][1] + 1)
+        else:
+            if len(freq) > 65536:
+                return None  # too many unique, abort early
+            sh_list.append(key)
+            freq[key] = (len(sh_list) - 1, 1)
+
+    if len(freq) > 65536:
         return None
-    order = np.argsort(-counts)
-    centroids_uint8 = keys[order]
-    centroids = np.zeros((len(order), 45), dtype=np.uint8)
-    centroids[:, :dim] = centroids_uint8
+
+    # Sort by frequency desc (match Go)
+    items = sorted(freq.items(), key=lambda x: -x[1][1])
+    palette_size = len(items)
+    centroids = np.zeros((palette_size, 45), dtype=np.uint8)
     centroids[:, dim:] = 128
-    idx_map = np.empty(len(order), dtype=np.int32)
-    idx_map[order] = np.arange(len(order), dtype=np.int32)
-    labels = idx_map[inverse].astype(np.int32)
+    idx_map = np.zeros(palette_size, dtype=np.int32)
+
+    for new_idx, (key, (old_idx, count)) in enumerate(items):
+        centroids[new_idx, :dim] = np.frombuffer(key, dtype=np.uint8)
+        idx_map[old_idx] = new_idx
+
+    labels = np.zeros(n, dtype=np.int32)
+    for i in range(n):
+        key = bytes(shs[i, :dim])
+        labels[i] = idx_map[freq[key][0]]
+
     return centroids, labels
 
 
@@ -84,23 +108,15 @@ def kmeans_sh(data: SplatData, sh_degree: int,
 
     labels = np.zeros(n, dtype=np.int32)
 
+    from .kmeans_bbf import _build_kdtree, _bbf_assign
     from ..common.progress import Progress, PHASE_KMEANS
-    try:
-        from scipy.spatial import cKDTree as KdTree
-    except ImportError:
-        KdTree = None
 
     for it in range(iterations):
         Progress.report(PHASE_KMEANS, it, iterations)
 
-        # 2. Build KD-Tree from centroids (only dim dimensions)
-        if KdTree is not None:
-            tree = KdTree(centroids_f32[:, :dim])
-            _, labels = tree.query(shs_dim, k=1)
-            labels = labels.astype(np.int32)
-        else:
-            diffs = shs_dim[:, None, :] - centroids_f32[None, :, :dim]
-            labels = np.argmin(np.sum(diffs * diffs, axis=2), axis=1).astype(np.int32)
+        # 2. Build KD-Tree + BBF assignment (matches Go's kmeansSh45 exactly)
+        tree = _build_kdtree(centroids_f32)
+        labels = _bbf_assign(shs_f32, tree, dim, max_bbf_nodes)
 
         # 3. Compute new centroids (only dim dimensions + full 45 for init)
         new_centroids = np.zeros((palette_size, 45), dtype=np.float32)
