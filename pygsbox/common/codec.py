@@ -37,6 +37,8 @@ def clip_float32(val: float) -> float:
 
 
 def clip_uint8_round(val: float) -> int:
+    if math.isnan(val) or math.isinf(val):
+        return 0
     return int(max(0, min(255, round(val))))
 
 
