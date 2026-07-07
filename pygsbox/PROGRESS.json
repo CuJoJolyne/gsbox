@@ -143,6 +143,43 @@
     "test_lod_meta_json_roundtrip",
     "test_btree_single_tile"
   ],
+  "sdd": {
+    "phase": "sdd_refactor",
+    "branch": "dev_sdd_refactor",
+    "specs_written": 23,
+    "spec_lines": 1853,
+    "ag_agents_md": "done",
+    "spec_template": "done",
+    "regeneration_verified": ["core/splat_data", "common/codec"],
+    "spec_quality": {
+      "codec": {"regenerability": "90%", "issues_found": 4, "issues_fixed": 4},
+      "splat_data": {"regenerability": "95%", "issues_found": 1, "issues_fixed": 0}
+    },
+    "modules": {
+      "common/codec": {"spec": "specs/common/codec.spec.md", "impl": "common/codec.py", "tests": 7, "regenerability": "90%"},
+      "common/compress": {"spec": "specs/common/compress.spec.md", "impl": "common/compress.py", "tests": 0, "regenerability": "90%"},
+      "common/file_utils": {"spec": "specs/common/file_utils.spec.md", "impl": "common/file_utils.py", "tests": 0, "regenerability": "90%"},
+      "common/progress": {"spec": "specs/common/progress.spec.md", "impl": "common/progress.py", "tests": 0, "regenerability": "90%"},
+      "common/freq": {"spec": "specs/common/freq.spec.md", "impl": "common/freq.py", "tests": 0, "regenerability": "85%"},
+      "core/splat_data": {"spec": "specs/core/splat_data.spec.md", "impl": "core/splat_data.py", "tests": 5, "regenerability": "95%"},
+      "core/transform": {"spec": "specs/core/transform.spec.md", "impl": "core/transform.py", "tests": 0, "regenerability": "80%"},
+      "core/morton": {"spec": "specs/core/morton.spec.md", "impl": "core/morton.py", "tests": 2, "regenerability": "85%"},
+      "core/sh_rotation": {"spec": "specs/core/sh_rotation.spec.md", "impl": "core/sh_rotation.py", "tests": 0, "regenerability": "75%"},
+      "formats/ply": {"spec": "specs/formats/ply.spec.md", "impl": "formats/ply.py", "tests": 1, "regenerability": "80%"},
+      "formats/splat": {"spec": "specs/formats/splat.spec.md", "impl": "formats/splat.py", "tests": 0, "regenerability": "90%"},
+      "formats/spx": {"spec": "specs/formats/spx.spec.md", "impl": "formats/spx.py", "tests": 0, "regenerability": "70%"},
+      "formats/spz": {"spec": "specs/formats/spz.spec.md", "impl": "formats/spz.py", "tests": 3, "regenerability": "85%"},
+      "formats/sog": {"spec": "specs/formats/sog.spec.md", "impl": "formats/sog.py", "tests": 1, "regenerability": "65%"},
+      "formats/ksplat": {"spec": "specs/formats/ksplat.spec.md", "impl": "formats/ksplat.py", "tests": 0, "regenerability": "80%"},
+      "formats/glb": {"spec": "specs/formats/glb.spec.md", "impl": "formats/glb.py", "tests": 2, "regenerability": "70%"},
+      "formats/obj": {"spec": "specs/formats/obj.spec.md", "impl": "formats/obj.py", "tests": 0, "regenerability": "90%"},
+      "advanced/kmeans": {"spec": "specs/advanced/kmeans.spec.md", "impl": "advanced/kmeans.py", "tests": 3, "regenerability": "75%"},
+      "advanced/simplify": {"spec": "specs/advanced/simplify.spec.md", "impl": "advanced/simplify.py", "tests": 2, "regenerability": "60%"},
+      "advanced/lod": {"spec": "specs/advanced/lod.spec.md", "impl": "advanced/lod.py", "tests": 4, "regenerability": "70%"},
+      "advanced/autocut": {"spec": "specs/advanced/autocut.spec.md", "impl": "advanced/autocut.py", "tests": 0, "regenerability": "80%"},
+      "cli": {"spec": "specs/cli.spec.md", "impl": "cli.py", "tests": 0, "regenerability": "40%"}
+    }
+  },
   "next_steps": [
     "Phase 5: Add comprehensive CLI with all conversion commands",
     "Phase 5: PyInstaller/pip packable release",
