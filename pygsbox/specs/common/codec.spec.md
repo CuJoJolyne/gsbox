@@ -119,8 +119,9 @@ None. This module contains only pure functions.
 - **Algorithm**: `clip_uint8(1.0 / (1.0 + exp(-val)) * 255.0)`
 
 #### `decode_splat_opacity(val: int) -> float`
-- **Description**: Decode uint8 to logit opacity via inverse sigmoid
-- **Edge Cases**: val=255 → +infinity, val=0 → -infinity
+- **Description**: Decode uint8 to logit opacity via inverse sigmoid.
+- **Algorithm**: `v = val / 255.0`; if v >= 1.0 return +inf; if v <= 0.0 return -inf; else `return -ln(1.0/v - 1.0)` (the logit function).
+- **Edge Cases**: val=255 → +infinity (logit of 1.0), val=0 → -infinity (logit of 0.0).
 
 ### 4.6 Rotation Encoding
 
@@ -142,12 +143,24 @@ None. This module contains only pure functions.
 - **Algorithm**: Reverse of encode — extract index (bits 31-30), decode 3 components (10 bits each), compute 4th via `sqrt(1 - sum_squares)`, convert back to uint8.
 
 #### `spz_encode_rotations(rw, rx, ry, rz: int) -> bytes`
-- **Description**: Encode 4 uint8 quaternion to 3-byte packed format (SPZ v2, older)
-- **Algorithm**: Normalize quaternion → find largest component → encode the other three as uint8 scaled by SQRT1_2 → return 3 bytes.
+- **Description**: Encode 4 uint8 quaternion to 3-byte packed format (SPZ v2, older).
+- **WARNING**: This encoding is **lossy** — the dropped component's identity and sign are NOT stored. Decode always assumes `r0` was the largest positive component. Only use when w component is known to be dominant.
+- **Algorithm**:
+  1. Convert uint8 → float [-1, 1]: `r_i = val_i / 128.0 - 1.0` for i in 0..3
+  2. Normalize: divide all 4 components by `qlen = sqrt(r0² + r1² + r2² + r3²)`
+  3. Find index of largest absolute component: `idx = argmax_i(|r_i|)`
+  4. Discard `r[idx]`, keep the other 3 in original order
+  5. For each kept component: `v = abs(r) / SQRT1_2` → `uint8 = clip_uint8(round(v * 255.0))`
+  6. Return 3 bytes (index and sign are lost)
 
 #### `spz_decode_rotations(b0, b1, b2: int) -> Tuple[int, int, int, int]`
-- **Description**: Decode 3-byte packed format to 4 uint8 quaternion components
-- **Algorithm**: Decode each of 3 components as `val * SQRT1_2 / 255`, compute 4th via `sqrt(max(0, 1 - sum_sq))`, convert to uint8.
+- **Description**: Decode 3-byte packed format to 4 uint8 quaternion.
+- **Algorithm**:
+  1. Treat bytes as r1, r2, r3 (assumes r0 was the dropped component)
+  2. Scale: `r1 = b0 / 255.0 * SQRT1_2`, `r2 = b1 / 255.0 * SQRT1_2`, `r3 = b2 / 255.0 * SQRT1_2`
+  3. Derive r0 (assumed largest, always positive): `r0 = sqrt(max(0.0, 1.0 - r1² - r2² - r3²))`
+  4. Convert to uint8: `uint8 = clip_uint8(r * 128.0 + 128.0)` for each of r0, r1, r2, r3
+- **Edge Cases**: If `r1² + r2² + r3² >= 1.0`, then r0=0 (clamped). The result is still a valid quaternion if the input had r0 as the genuine largest positive component.
 
 #### `decode_spx_rotations(rx, ry, rz: int) -> Tuple[int, int, int, int]`
 - **Description**: Decode 3-byte SPX rotation to 4 uint8 quaternion
@@ -204,8 +217,14 @@ None. This module contains only pure functions.
 - **Algorithm**: `for b in bytes: rs = ((rs * 33) ^ b) & 0xFFFFFFFF`
 
 #### `decode_float16(encoded: int) -> float`
-- **Description**: Decode IEEE 754 half-precision float to float32
-- **Used by**: KSplat reader (compression mode 1)
+- **Description**: Decode IEEE 754 half-precision float to float32.
+- **Algorithm**: Extract sign (bit 15), exponent (bits 10-14, 5 bits), mantissa (bits 0-9, 10 bits). Handle 4 cases:
+  1. exponent=0, mantissa=0: return ±0.0
+  2. exponent=0, mantissa≠0: subnormal → `(-1)^sign × 2^(-14) × m/1024`
+  3. exponent=0x1F, mantissa=0: return ±inf
+  4. exponent=0x1F, mantissa≠0: return NaN
+  5. else: normal → `(-1)^sign × 2^(exponent-15) × (1 + m/1024)`
+- **Used by**: KSplat reader (compression mode 1/2)
 
 ## 5. Edge Cases
 
@@ -213,16 +232,18 @@ None. This module contains only pure functions.
 |----------|----------|
 | `decode_spx_scale(0)` | Returns -10.0 |
 | `decode_spx_scale(255)` | Returns ~5.9375 |
-| `spz_decode_position(b'\xff\xff\x7f', 12)` | Returns ~32.0 (max positive) |
-| `spz_decode_position(b'\x00\x00\x80', 12)` | Returns ~-32.0 (max negative) |
-| `encode_splat_opacity(inf)` → uint8 | Returns 255 |
-| `encode_splat_opacity(-inf)` → uint8 | Returns 0 |
+| `spz_decode_position(b'\xff\xff\x7f', 12)` | Returns ~8.3886 (max positive for 24-bit/12frac scale) |
+| `spz_decode_position(b'\x00\x00\x80', 12)` | Returns ~-8.3886 (max negative) |
+| `encode_splat_opacity(inf)` | Returns 255 |
+| `encode_splat_opacity(-inf)` | Returns 0 |
 | NQ rotation: all components 128 | identity quaternion, largest component at index 0 or 3 |
 | `decode_float16(0x0000)` | Returns 0.0 |
 | `decode_float16(0x7C00)` | Returns +inf |
 | `hash_bytes(b'')` | Returns init_val (53653) |
 | `encode_log(0, 1)` | Returns 0.0 |
 | `decode_log(0, 1)` | Returns 0.0 |
+| `decode_splat_opacity(255)` | Returns +inf (logit of 1.0) |
+| `decode_splat_opacity(0)` | Returns -inf (logit of 0.0) |
 
 ## 6. Examples
 
