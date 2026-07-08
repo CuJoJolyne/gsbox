@@ -53,11 +53,11 @@ def compute_xyz_log_min_max(data: splat_data.SplatData) -> V3MinMax:
     result = V3MinMax()
     if data.count == 0:
         return result
-    pos = data.position
+    pos = data.position.astype(np.float64)
     abs_pos = np.abs(pos)
     log_vals = np.log(abs_pos + 1.0)
     neg_mask = pos < 0
-    log_vals = np.where(neg_mask, -log_vals, log_vals)
+    log_vals = np.where(neg_mask, -log_vals, log_vals).astype(np.float32)
     result.min_x = float(np.min(log_vals[:, 0]))
     result.max_x = float(np.max(log_vals[:, 0]))
     result.min_y = float(np.min(log_vals[:, 1]))
