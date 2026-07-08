@@ -134,13 +134,15 @@ def kmeans_sh(data: SplatData, sh_degree: int,
                 np.add.at(new_centroids[:, d], labels, shs_f64[:, d])
             np.add.at(counts, labels, 1)
             for c in range(palette_size):
-                if counts[c] == 0:
-                    ridx = rng.integers(0, n)
-                    new_centroids[c] = shs_f64[ridx]
-                else:
+                if counts[c] > 0:
                     for d in range(dim):
                         new_centroids[c, d] /= float(counts[c])
-                    new_centroids[c, dim:] = centroids_f64[c, dim:]
+
+        # 4. Handle empty clusters: re-init from random data point (match Go)
+        for c in range(palette_size):
+            if counts[c] == 0:
+                ridx = rng.integers(0, n)
+                new_centroids[c] = shs_f64[ridx]
 
         centroids_f64 = new_centroids
 

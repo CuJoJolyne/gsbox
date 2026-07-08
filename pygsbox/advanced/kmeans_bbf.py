@@ -35,27 +35,20 @@ class _KdTree:
                                       np.array([], dtype=np.int32), np.array([], dtype=np.int32),
                                       self.cents, 0)
             return self._flat
-        # BFS traversal with queue (no O(n) pop(0))
-        queue: List[Optional[_KdNode]] = [self.root]
-        head = 0
+        # Pre-order DFS to assign contiguous indices (root=0, children computed recursively)
         idxs, axes, lefts, rights = [], [], [], []
-        while head < len(queue):
-            n = queue[head]
-            head += 1
-            if n is None:
-                continue
+        def dfs(node: Optional[_KdNode]) -> int:
+            if node is None:
+                return -1
             ci = len(idxs)
-            idxs.append(n.idx); axes.append(n.axis)
-            if n.left:
-                queue.append(n.left)
-                lefts.append(ci + 1)
-            else:
-                lefts.append(-1)
-            if n.right:
-                queue.append(n.right)
-                rights.append(ci + 1)
-            else:
-                rights.append(-1)
+            idxs.append(node.idx); axes.append(node.axis)
+            lefts.append(-1); rights.append(-1)  # placeholder, filled by children
+            li = dfs(node.left)
+            ri = dfs(node.right)
+            lefts[ci] = li
+            rights[ci] = ri
+            return ci
+        dfs(self.root)
         self._flat = _FlatKdTree(
             np.array(idxs, dtype=np.int32), np.array(axes, dtype=np.int32),
             np.array(lefts, dtype=np.int32), np.array(rights, dtype=np.int32),
@@ -313,14 +306,11 @@ if _HAS_NUMBA:
 
     @numba.njit(cache=False, fastmath=True)
     def _centroid_divide_jit(new_centroids, old_centroids, counts, palette_size, dim):
-        """Numba JIT centroid division + empty cluster handling."""
+        """Numba JIT centroid division + empty cluster handling.
+        Empty clusters are kept as-is (the caller re-initializes them)."""
         for c in range(palette_size):
-            if counts[c] == 0:
-                for d in range(dim):
-                    new_centroids[c, d] = old_centroids[c, d]
-            else:
+            if counts[c] > 0:
                 inv = 1.0 / float(counts[c])
                 for d in range(dim):
                     new_centroids[c, d] *= inv
-                for d in range(dim, 45):
-                    new_centroids[c, d] = old_centroids[c, d]
+            # For dim..45, keep old values (not updated by K-Means)
