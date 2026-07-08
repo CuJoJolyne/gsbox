@@ -88,11 +88,11 @@ def kmeans_sh(data: SplatData, sh_degree: int,
 
     shs_uint8 = get_sh_for_kmeans(data, quality)
     shs_f32 = sh_to_float32(shs_uint8)
-    shs_dim = shs_f32[:, :dim].astype(np.float32)
+    shs_f64 = shs_f32.astype(np.float64)  # pre-convert for fast BBF distance
 
     # 1. Random unique init (match Go: allow dupes after maxFaildCnt)
     rng = np.random.default_rng(0)
-    centroids_f32 = np.zeros((palette_size, 45), dtype=np.float32)
+    centroids_f64 = np.zeros((palette_size, 45), dtype=np.float64)
     used = set()
     i = 0
     max_fail = max(palette_size // 20, 1000)
@@ -101,7 +101,7 @@ def kmeans_sh(data: SplatData, sh_degree: int,
         idx = rng.integers(0, n)
         if idx not in used or fail_cnt >= max_fail:
             used.add(idx)
-            centroids_f32[i] = shs_f32[idx]
+            centroids_f64[i] = shs_f64[idx]
             i += 1
         else:
             fail_cnt += 1
@@ -115,34 +115,34 @@ def kmeans_sh(data: SplatData, sh_degree: int,
         Progress.report(PHASE_KMEANS, it, iterations)
 
         # 2. Build KD-Tree + BBF assignment (matches Go's kmeansSh45 exactly)
-        tree = _build_kdtree(centroids_f32)
-        labels = _bbf_assign(shs_f32, tree, dim, max_bbf_nodes)
+        tree = _build_kdtree(centroids_f64)
+        labels = _bbf_assign(shs_f64, tree, dim, max_bbf_nodes)
 
         # 3. Compute new centroids (only dim dimensions + full 45 for init)
-        new_centroids = np.zeros((palette_size, 45), dtype=np.float32)
+        new_centroids = np.zeros((palette_size, 45), dtype=np.float64)
         counts = np.zeros(palette_size, dtype=np.int32)
         for d in range(dim):
-            np.add.at(new_centroids[:, d], labels, shs_f32[:, d])
+            np.add.at(new_centroids[:, d], labels, shs_f64[:, d])
         np.add.at(counts, labels, 1)
 
         # 4. Handle empty clusters: re-init from random data point
         for c in range(palette_size):
             if counts[c] == 0:
                 ridx = rng.integers(0, n)
-                new_centroids[c] = shs_f32[ridx]
+                new_centroids[c] = shs_f64[ridx]
             else:
                 for d in range(dim):
                     new_centroids[c, d] /= float(counts[c])
                 # keep existing values for dim..45
-                new_centroids[c, dim:] = centroids_f32[c, dim:]
+                new_centroids[c, dim:] = centroids_f64[c, dim:]
 
-        centroids_f32 = new_centroids
+        centroids_f64 = new_centroids
 
     Progress.done(PHASE_KMEANS, iterations)
 
     # 4. Convert float32 → uint8, zero out dim..45
     centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)
-    centroids_uint8[:, :dim] = sh_float32_to_uint8(centroids_f32[:, :dim])
+    centroids_uint8[:, :dim] = np.clip(np.round(centroids_f64[:, :dim] * 128.0 + 128.0), 0, 255).astype(np.uint8)
 
     # 5. Sort by descending count + remove empties (match Go's sortCentroidsByCounts)
     cnts = np.bincount(labels.astype(np.int32), minlength=palette_size)
