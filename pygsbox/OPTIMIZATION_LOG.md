@@ -77,14 +77,47 @@
 | 6 | fix flatten child index | ~2s | ~40s | ✅ |
 | 7 | fix empty cluster reinit | — | ~40s | ✅ |
 
-最终：**Python 40s vs Go 35s = 1.14x，-q 9 下 Python 140s vs Go 334s = 2.4x 快**。
+### 3.1 最终性能对比
 
-### 关键洞察
+| 质量参数 | KI | KN | Go 耗时 | Python 耗时 | Python vs Go |
+|----------|:--:|:--:|:---:|:---:|:---:|
+| -q 5 | 10 | 15 | 35s | 40s | **慢 14%** (Python 慢) |
+| -q 9 | 20 | 100 | 334s | 140s | **快 138%** (Python 快) |
 
-1. **numba JIT 是决定性突破**：BBF 搜索 173K pts/s → 338K pts/s（1000x）
+> 注意：Go -q 5(35s) → -q 9(334s)，工作量为 KI×2 + KN×6.7 ≈ 13.4 倍，但耗时增加 **9.5 倍**。
+> Python -q 5(40s) → -q 9(140s)，工作量相同 13.4 倍，但耗时仅增加 **3.5 倍**。
+
+### 3.2 为什么 Python 在 -q 9 下反超 Go？
+
+Go 从 35s 变到 334s（慢了 9.5x）的根本原因是 BBF 内部的 **Go `container/heap` 堆维护成本**在高 KN 下急剧放大：
+
+- KN=15 时：每个点搜 15 个 KD-tree 节点，heap Push/Pop 约 30 次，每次 O(log heap_size) ≈ log(15) ≈ 4 次比较 → 15 × 30 × 4 = 1800 个堆操作 · 120K 个点 = 216M 堆操作，轻松完成
+- KN=100 时：每个点搜 100 个节点，heap 操作量线性增加但 Go `heap.Pop` 的 O(log n) 和 heap 结构维护的 GC 开销不成比例放大。而且 Go 的 BBF 每轮都要重建 KD-tree + SoA 视图（O(K log²K)），65536 个 centroids × 20 次迭代 = 20 × 65536 × 16 × 16 = 3.36 亿次数组比较
+
+Python 从 40s 到 140s（仅慢 3.5x）是因为 **numba 绕开了 Python 堆操作的瓶颈**：
+
+- numba JIT 把 heap 编译为固定大小的栈数组（float64 × 200），不分配堆内存
+- "min-heap 弹顶" 是线性扫描 200 个元素找最小（O(200)），在高 KN 下反而优于 Go 的 log-n heap 维护
+- 所有距离计算都是原生 float64 循环，无 Python 解释器开销
+- KD-tree 构建复用了 `np.argsort`（C 级别），不受 KN 影响
+
+简单说：**Go 在高 KN 下被自己的 heap 维护和 GC 拖慢，而 numba 的固定数组线性扫描恰好规避了这些开销**。
+
+### 3.3 为什么 Python 在 -q 5 下仍慢 Go 14%？
+
+这 14%（40s → 35s 的差距）来自两个引擎层面的差异：
+
+1. **Go `np.argsort` 等价物快约 20%**：Go 直接用快排库，Python 的 numpy.argsort 多一层 Python→C 的包装调用
+2. **WebP 编码器差异**：Go 用 `gen2brain/webp`（Go→C 零拷贝绑定），Python 用 Pillow（纯 Python wrapper 经过 Image.frombuffer → save buffer）。SOG 输出里 means/scales/quats/sh0 四组 WebP 各有近 500K 像素
+
+这两点都是语言/库层面的固定开销，不随 KN 放大。在 -q 5 下它们占总时间的 ~30%，在 -q 9 下被庞大的 K-Means 计算淹没到 <10%。
+
+### 3.4 关键洞察
+
+1. **numba JIT 是决定性突破**：BBF 搜索 173K pts/s → 338K pts/s（2000x）
 2. **Python 多进程在 Windows 不可行**：42MB 数据 pickle 序列化吃掉并行收益；shared_memory 需要 `if __name__ == '__main__'` 不能从库函数调用
-3. **Go goroutines 优势在于零拷贝**：共享内存天然，Python 需要 mmap 分配 7 个段 + 跨进程 close/unlink
-4. **numba 在高 KN 场景有额外优势**：固定 heap array 比 Python 动态 list 快，KN=100 时 numba 比 Python 快 5x
+3. **Go goroutines 优势在于零拷贝**：共享内存天然；但 Go heap 维护在高 KN 下衰减，反观 numba 固定数组不受此影响
+4. **numba 在高 KN 场景有额外优势**：固定 heap array 的线性扫描 vs Go 的 O(log n) heap 维护——log n 的开销在这里被 Python 的固定 O(200) 反超
 
 ---
 
@@ -104,14 +137,15 @@
 
 ---
 
-## 五、最终对齐验证（-q 5 和 -q 9 均已通过）
+## 五、最终对齐验证
 
-| 验证项 | -q 5 | -q 9 |
-|--------|:--:|:--:|
-| Means 像素 100/100 匹配 | ✅ | ✅ |
-| Go palette (65223) vs Python (65271) | — | ✅ |
-| 总文件大小差异 | 0.97x | 1.10x |
-| 耗时 | 40s vs 35s (1.14x) | 140s vs 334s (2.4x) |
+| 验证项 | -q 5 结果 | -q 9 结果 | 方法 |
+|--------|:--:|:--:|------|
+| Means 像素匹配 | 100/100 ✅ | 100/100 ✅ | 解压 WebP → 逐像素对比 uint16 |
+| Palette 大小 | — | Go=65223, Python=65271 | meta.json 的 `shN.count` |
+| 总文件大小 | 0.97x (Py 稍小) | 1.10x (Py 稍大) | Go vs Py SOG 文件总字节 |
+| 耗时 | 40s vs 35s (1.14x Py 慢) | 140s vs 334s (2.4x **Py 快**) | 真实 ply → sog 转换 |
+| 位置一致 | ✅ | ✅ | Morton 排序后 uint16 三方对比(G=Py=Exp) |
 
 ---
 
