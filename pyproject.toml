@@ -35,7 +35,8 @@ dependencies = [
 webp = ["Pillow>=10.0"]
 zstd = ["zstandard>=0.21"]
 scipy = ["scipy>=1.10"]
-full = ["Pillow>=10.0", "zstandard>=0.21", "scipy>=1.10"]
+numba = ["numba>=0.60"]
+full = ["Pillow>=10.0", "zstandard>=0.21", "scipy>=1.10", "numba>=0.60"]
 
 [project.scripts]
 pygsbox = "pygsbox.cli:main"

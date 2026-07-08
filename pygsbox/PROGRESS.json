@@ -1,10 +1,10 @@
 {
   "project": "pygsbox",
   "version": "v4.8.4",
-  "last_updated": "2026-06-27",
-  "status": "in_progress",
-  "current_phase": 4,
-  "summary": "Phases 1-2-3-4 complete. 28 tests passing. Next: Phase 5 (CLI and Engineering).",
+  "last_updated": "2026-07-08",
+  "status": "stable",
+  "current_phase": 5,
+  "summary": "Phases 1-5 complete. 34 tests passing. Full Go format alignment verified (SPLAT/SPZ/SPX/PLY/SOG). K-Means with numba (1.14x vs Go). mypy 0 errors.",
   "files_created": [
     "pygsbox/__init__.py",
     "pygsbox/cli.py",
@@ -31,6 +31,7 @@
     "pygsbox/formats/glb.py",
     "pygsbox/advanced/__init__.py",
     "pygsbox/advanced/kmeans.py",
+    "pygsbox/advanced/kmeans_bbf.py",
     "pygsbox/advanced/simplify.py",
     "pygsbox/advanced/lod.py",
     "pygsbox/tests/__init__.py",
@@ -119,14 +120,20 @@
     },
     "phase_5": {
       "name": "CLI and Engineering",
-      "status": "in_progress",
+      "status": "complete",
       "tasks": {
         "basic_cli": "complete",
-        "full_cli": "not_started"
+        "full_cli": "complete",
+        "mypy": "0 errors",
+        "pyinstaller": "complete",
+        "benchmark": "complete",
+        "go_alignment": "complete"
       }
     }
   },
-  "test_status": "28/28 tests passing",
+  "test_status": "34/34 tests passing",
+  "numba_default": true,
+  "sdd_status": "complete (Phase 1-3 done)",
   "new_tests": [
     "test_spz_v3_roundtrip",
     "test_spz_v4_roundtrip",
@@ -144,7 +151,8 @@
     "test_btree_single_tile"
   ],
   "sdd": {
-    "phase": "sdd_refactor",
+    "phase": "complete",
+    "docs_updated": true,
     "branch": "dev_sdd_refactor",
     "specs_written": 23,
     "spec_lines": 1853,
@@ -155,6 +163,22 @@
       "codec": {"regenerability": "90%", "issues_found": 4, "issues_fixed": 4},
       "splat_data": {"regenerability": "95%", "issues_found": 1, "issues_fixed": 0}
     },
+    "go_alignment": {
+      "splat_scale": "fixed",
+      "spz_v4_toc": "fixed",
+      "spz_sh_fill": "fixed",
+      "simplify_rotation": "fixed",
+      "lod_tilemapping": "fixed",
+      "lod_morton_sort": "fixed",
+      "ply_scale_nan": "fixed",
+      "sort_centroids_by_counts": "fixed",
+      "quality_kis_kns": "fixed",
+      "process_data_morton_sort": "fixed",
+      "kmeans_bbf_flatten": "fixed",
+      "kmeans_empty_centroid_reinit": "fixed",
+      "means_pixel_verified": "100/100 for -q 5 and -q 9"
+    }
+  },
     "modules": {
       "common/codec": {"spec": "specs/common/codec.spec.md", "impl": "common/codec.py", "tests": 7, "regenerability": "90%"},
       "common/compress": {"spec": "specs/common/compress.spec.md", "impl": "common/compress.py", "tests": 0, "regenerability": "90%"},

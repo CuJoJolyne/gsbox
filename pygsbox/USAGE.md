@@ -21,6 +21,8 @@ Python 版 3DGS 格式转换工具，完整移植自 Go 版 [gsbox](https://gith
 - [x] OBJ 顶点变换：对 `.obj` 文件做旋转/缩放/平移
 - [x] HTTP 输入：支持从 URL 下载文件后直接转换
 - [x] 进度显示：转换过程实时显示进度条
+- [x] **numba JIT 加速**：K-Means SH 聚类接近 Go 编译性能
+- [x] **完整 Go 对齐**：splat/SPZ/SPX/PLY/SOG 格式与 Go 实现逐字节验证通过
 
 ---
 
@@ -52,11 +54,15 @@ Python 版 3DGS 格式转换工具，完整移植自 Go 版 [gsbox](https://gith
 # 基础安装（仅 numpy）
 pip install .
 
-# 完整安装（含 WebP + zstd + scipy）
+# 完整安装（含 WebP + zstd + scipy + numba）
 pip install ".[full]"
 
-# 可选依赖：WebP 支持（SOG/SPX-WebP 块）、zstd（SPZ v4）、scipy（K-Means）
-pip install Pillow zstandard scipy
+# 可选依赖
+pip install Pillow zstandard scipy numba
+#   Pillow:    WebP 支持（SOG/SPX-WebP 块）
+#   zstandard: zstd 压缩（SPZ v4）
+#   scipy:     cKDTree 加速（K-Means，低维 SH）
+#   numba:     JIT 编译（K-Means，所有维度，推荐）
 ```
 
 ### 方式 2：开发模式
@@ -322,7 +328,7 @@ with Progress(callback=default_callback):
 
 ## 性能参考
 
-基于 benchmark（200K 点），单核 3.0Ghz CPU：
+基于 benchmark（200K 点，单核 3.0Ghz CPU）：
 
 | 格式 | 写入 | 读取 | 备注 |
 |------|------|------|------|
@@ -331,6 +337,13 @@ with Progress(callback=default_callback):
 | SPX v3 | 24.9K pt/s | 13.3K pt/s | WebP 块解码慢 |
 | SPZ v4 | 27.4K pt/s | 34.5K pt/s | zstd 比 gzip 快 |
 | SOG v2 | 22.3K pt/s | 28.1K pt/s | WebP 编码 |
+
+### 真实数据测试（119K 点，SH3，ply→sog）
+
+| 版本 | -q 5 (KI=10) | -q 9 (KI=20) | vs Go |
+|------|:---:|:---:|:---:|
+| Go 原版 | 35s | 334s | — |
+| Python (numba) | 40s | 140s | 1.14x / 2.4x 快 |
 
 > ⚠️ 写入性能瓶颈在 Python 逐点循环，后续可考虑 Cython 优化。
 
@@ -342,7 +355,7 @@ with Progress(callback=default_callback):
 - **SPX 块压缩**：仅支持 gzip 和 xz，不支持私有压缩格式。
 - **合并多文件**：未实现 `join` 命令（Go 版 `-i` 多输入）。
 - **数据打印**：未实现 `printsplat` 命令。
-- **mypy 0 警告**：已通过 assert 缩窄消除所有 mypy 错误，但部分 numpy 返回类型仍为 `Any`。
+- **无 numba 时 K-Means 慢 7x**：纯 Python BBF 比 Go 慢 7x，`pip install numba` 后仅慢 1.14x。
 
 ---
 
@@ -353,16 +366,17 @@ with Progress(callback=default_callback):
 - numpy >= 1.24
 
 **可选**：
-- `Pillow`：WebP 编解码（SOG 格式 + SPX WebP 块必需）
-- `zstandard`：zstd 压缩（SPZ v4 必需）
-- `scipy`：KD-Tree 加速（K-Means 聚类推荐）
+- `Pillow >= 10.0`：WebP 编解码（SOG 格式 + SPX WebP 块必需）
+- `zstandard >= 0.21`：zstd 压缩（SPZ v4 必需）
+- `scipy >= 1.10`：KD-Tree 加速（K-Means 低维 SH）
+- `numba >= 0.60`：JIT 编译（K-Means 所有维度，**强烈推荐**，100x 加速）
 
 ---
 
 ## 测试
 
 ```bash
-# 运行全部测试（28 个，覆盖所有格式 roundtrip + 高级特性）
+# 运行全部测试（34 个，覆盖所有格式 roundtrip + 高级特性）
 python tests/test_basic.py
 
 # 运行性能基准
