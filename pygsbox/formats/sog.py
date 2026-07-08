@@ -351,7 +351,7 @@ def _read_sog_v2(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
     return header, data
 
 
-def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip: bool = True):
+def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip: bool = True, quality: int = 5):
     os.makedirs(os.path.dirname(os.path.abspath(sog_or_json_path)) or '.', exist_ok=True)
 
     from ..common.progress import Progress, PHASE_WRITE
@@ -383,7 +383,7 @@ def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip
 
     palette_size = 0
     if sh_degree > 0:
-        shN_files, palette_size = _write_sog_shN(work_dir, data, sh_degree)
+        shN_files, palette_size = _write_sog_shN(work_dir, data, sh_degree, quality=quality)
         files.extend(shN_files)
     Progress.report(PHASE_WRITE, 85, 100)
 
@@ -476,7 +476,7 @@ def _write_sog_sh0(dir_path: str, data: SplatData) -> List[str]:
     return [path]
 
 
-def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int) -> Tuple[List[str], int]:
+def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int, quality: int = 5) -> Tuple[List[str], int]:
     if data.count == 0:
         return [], 0
 
@@ -487,7 +487,7 @@ def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int) -> Tuple[List
     width_map = {1: 96, 2: 512, 3: 960}
     centroids_width = width_map.get(sh_degree, 960)
 
-    centroids, labels, palette_size = rewrite_sh_by_kmeans(data, sh_degree)
+    centroids, labels, palette_size = rewrite_sh_by_kmeans(data, sh_degree, quality=quality)
 
     if centroids is None or palette_size == 0:
         return [], 0

@@ -167,7 +167,7 @@ def _write_file(path: str, data, sh_degree: int, args: dict):
     elif ext == '.glb':
         glb.write_glb(path, data, sh_degree=sh_degree)
     elif ext == '.sog' or path.lower().endswith('meta.json'):
-        sog.write_sog(path, data, sh_degree=sh_degree)
+        sog.write_sog(path, data, sh_degree=sh_degree, quality=args.get('quality', 5))
     else:
         print(f"Error: Unsupported output format: {path}")
         sys.exit(1)

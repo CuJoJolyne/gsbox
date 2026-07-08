@@ -233,13 +233,20 @@ def _kmeans_basic(shs_f32: np.ndarray, palette_size: int,
 
 
 def rewrite_sh_by_kmeans(data: SplatData, sh_degree: int,
-                         iterations: int = 10, quality: int = 9
+                         iterations: int = -1, quality: int = 5
                          ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], int]:
     if sh_degree == 0 or data.count == 0:
         return None, None, 0
 
+    # Match Go's quality → KI/KN mapping (kis/kns arrays)
+    _kis = [5, 7, 9, 10, 10, 10, 12, 15, 20]
+    _kns = [10, 12, 14, 15, 15, 20, 30, 50, 100]
+    qidx = max(0, min(8, quality - 1))
+    ki = iterations if iterations > 0 else _kis[qidx]
+    kn = _kns[qidx]
+
     centroids, labels, palette_size = kmeans_sh(
-        data, sh_degree, iterations=iterations, quality=quality
+        data, sh_degree, iterations=ki, max_bbf_nodes=kn, quality=quality
     )
     data.palette_idx = np.clip(labels.astype(np.uint16), 0, 65535)
     data.sh = centroids[labels]
