@@ -140,14 +140,26 @@ def kmeans_sh(data: SplatData, sh_degree: int,
 
     Progress.done(PHASE_KMEANS, iterations)
 
-    # 5. Convert float32 → uint8, zero out dim..45
+    # 4. Convert float32 → uint8, zero out dim..45
     centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)
     centroids_uint8[:, :dim] = sh_float32_to_uint8(centroids_f32[:, :dim])
 
-    return centroids_uint8, labels.astype(np.int32), palette_size
+    # 5. Sort by descending count + remove empties (match Go's sortCentroidsByCounts)
+    cnts = np.bincount(labels.astype(np.int32), minlength=palette_size)
+    order = np.argsort(-cnts)
+    valid_mask = cnts[order] > 0
+    order = order[valid_mask]
+    sorted_palette_size = len(order)
+    if sorted_palette_size > 0 and sorted_palette_size < palette_size:
+        sorted_centroids = np.full((sorted_palette_size, 45), 128, dtype=np.uint8)
+        sorted_centroids[:, :dim] = centroids_uint8[order, :dim]
+        centroids_uint8 = sorted_centroids
+        palette_size = sorted_palette_size
+        # reindex labels
+        idx_map = np.full(palette_size, -1, dtype=np.int32)
+        idx_map[order] = np.arange(sorted_palette_size, dtype=np.int32)
+        labels = idx_map[labels.astype(np.int32)]
 
-    centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)
-    centroids_uint8[:, :dim] = sh_float32_to_uint8(centroids_f32)
     return centroids_uint8, labels.astype(np.int32), palette_size
 
 
