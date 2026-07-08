@@ -201,10 +201,10 @@ def _read_official_ply_data(file_path: str, header: PlyHeader) -> SplatData:
     opacity_raw = records['opacity'].astype(np.float32)
     data.color[:, 3] = np.clip(np.round(1.0 / (1.0 + np.exp(-opacity_raw)) * 255.0), 0, 255).astype(np.uint8)
 
-    # Scale: decode_splat_scale(val) = log(val)
-    data.scale[:, 0] = np.log(records['scale_0'].astype(np.float32)).astype(np.float32)
-    data.scale[:, 1] = np.log(records['scale_1'].astype(np.float32)).astype(np.float32)
-    data.scale[:, 2] = np.log(records['scale_2'].astype(np.float32)).astype(np.float32)
+    # Scale: PLY stores log-scale directly (matching Go: read raw float32, no transform)
+    data.scale[:, 0] = records['scale_0'].astype(np.float32)
+    data.scale[:, 1] = records['scale_1'].astype(np.float32)
+    data.scale[:, 2] = records['scale_2'].astype(np.float32)
 
     r0 = records['rot_0'].astype(np.float32)
     r1 = records['rot_1'].astype(np.float32)
@@ -682,9 +682,9 @@ def write_ply(file_path: str, data: SplatData, comment: str = "", sh_degree: int
             opacity = codec.decode_splat_opacity(int(data.color[i, 3]))
             row.extend(np.array([opacity], dtype=np.float32).tobytes())
 
-            s0 = codec.encode_splat_scale(float(data.scale[i, 0]))
-            s1 = codec.encode_splat_scale(float(data.scale[i, 1]))
-            s2 = codec.encode_splat_scale(float(data.scale[i, 2]))
+            s0 = float(data.scale[i, 0])
+            s1 = float(data.scale[i, 1])
+            s2 = float(data.scale[i, 2])
             row.extend(np.array([s0, s1, s2], dtype=np.float32).tobytes())
 
             r0 = codec.decode_splat_rotation(int(data.rotation[i, 0]))
