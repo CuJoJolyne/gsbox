@@ -108,15 +108,18 @@ def kmeans_sh(data: SplatData, sh_degree: int,
 
     labels = np.zeros(n, dtype=np.int32)
 
-    from .kmeans_bbf import _build_kdtree, _bbf_assign
+    from .kmeans_bbf import _build_kdtree, _bbf_assign, _bbf_assign_numba, _HAS_NUMBA
     from ..common.progress import Progress, PHASE_KMEANS
 
     for it in range(iterations):
         Progress.report(PHASE_KMEANS, it, iterations)
 
-        # 2. Build KD-Tree + BBF assignment (matches Go's kmeansSh45 exactly)
+        # 2. Build KD-Tree + BBF assignment
         tree = _build_kdtree(centroids_f64)
-        labels = _bbf_assign(shs_f64, tree, dim, max_bbf_nodes)
+        if _HAS_NUMBA:
+            labels = _bbf_assign_numba(shs_f64, tree, dim, max_bbf_nodes)
+        else:
+            labels = _bbf_assign(shs_f64, tree, dim, max_bbf_nodes)
 
         # 3. Compute new centroids (only dim dimensions + full 45 for init)
         new_centroids = np.zeros((palette_size, 45), dtype=np.float64)

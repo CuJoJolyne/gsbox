@@ -250,3 +250,50 @@ def _bfs_worker_shm(pts_name, pts_shape, pts_dtype,
                 heap.append((diff * diff, counter, second)); counter += 1; heap_size += 1
 
         labels[i] = best_idx if best_idx >= 0 else 0
+
+# ---- Numba JIT BBF (fast path) ----
+
+try:
+    import numba
+    @numba.njit(cache=False, parallel=False, fastmath=True)
+    def _bfs_jit(points, cents, idx_arr, axis_arr, left_arr, right_arr, dim, max_bbf_nodes, labels):
+        n = len(points)
+        for i in range(n):
+            pt_full = points[i]
+            pt = pt_full[:dim]
+            best_idx = -1
+            best_dist = np.inf
+            heap_d = np.zeros(200, dtype=np.float64)
+            heap_n = np.zeros(200, dtype=np.int32)
+            heap_d[0] = 0.0; heap_n[0] = 0; heap_sz = 1; visited = 0
+            while heap_sz > 0 and visited < max_bbf_nodes:
+                mp = 0; mv = heap_d[0]
+                for j in range(1, heap_sz):
+                    if heap_d[j] < mv: mv = heap_d[j]; mp = j
+                ni = heap_n[mp]; heap_sz -= 1
+                if mp < heap_sz: heap_d[mp] = heap_d[heap_sz]; heap_n[mp] = heap_n[heap_sz]
+                visited += 1
+                cidx = idx_arr[ni]
+                dist = 0.0
+                for d in range(dim): delta = pt[d] - cents[cidx, d]; dist += delta * delta
+                if dist < best_dist: best_dist = dist; best_idx = cidx
+                ax = axis_arr[ni]
+                diff = pt_full[ax] - cents[cidx, ax]
+                f, s = (left_arr[ni], right_arr[ni]) if diff < 0.0 else (right_arr[ni], left_arr[ni])
+                if f >= 0: heap_d[heap_sz] = 0.0; heap_n[heap_sz] = f; heap_sz += 1
+                if s >= 0: heap_d[heap_sz] = diff * diff; heap_n[heap_sz] = s; heap_sz += 1
+            labels[i] = best_idx if best_idx >= 0 else 0
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
+
+def _bbf_assign_numba(points, tree, dim, max_bbf_nodes):
+    if not _HAS_NUMBA:
+        return _bfs_search_chunk((points, tree.flatten(), dim, max_bbf_nodes, 0, len(points)))
+    flat = tree.flatten(); n = len(points)
+    labels = np.zeros(n, dtype=np.int32)
+    pts = points.astype(np.float64, copy=False) if points.dtype == np.float64 else points.astype(np.float64)
+    cts = flat.cents.astype(np.float64, copy=False) if flat.cents.dtype == np.float64 else flat.cents.astype(np.float64)
+    _bfs_jit(pts, cts, flat.idx, flat.axis, flat.left, flat.right, dim, max_bbf_nodes, labels)
+    return labels
