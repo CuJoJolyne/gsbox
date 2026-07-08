@@ -126,6 +126,12 @@ def from_splat_format_bytes(data: bytes, count: int) -> SplatData:
     splat.scale[:, 1] = np.frombuffer(arr[:, 16:20].tobytes(), dtype=np.float32)
     splat.scale[:, 2] = np.frombuffer(arr[:, 20:24].tobytes(), dtype=np.float32)
 
+    with np.errstate(invalid='ignore'):
+        with np.errstate(divide='ignore'):
+            splat.scale[:, 0] = np.clip(np.log(splat.scale[:, 0]).astype(np.float32), -200.0, 200.0)
+            splat.scale[:, 1] = np.clip(np.log(splat.scale[:, 1]).astype(np.float32), -200.0, 200.0)
+            splat.scale[:, 2] = np.clip(np.log(splat.scale[:, 2]).astype(np.float32), -200.0, 200.0)
+
     splat.color[:, 0] = arr[:, 24]
     splat.color[:, 1] = arr[:, 25]
     splat.color[:, 2] = arr[:, 26]
@@ -148,9 +154,10 @@ def to_splat_format_bytes(splat: SplatData) -> bytes:
     arr[:, 1] = splat.position[:, 1]
     arr[:, 2] = splat.position[:, 2]
 
-    arr[:, 3] = splat.scale[:, 0]
-    arr[:, 4] = splat.scale[:, 1]
-    arr[:, 5] = splat.scale[:, 2]
+    with np.errstate(over='ignore'):
+        arr[:, 3] = np.clip(np.exp(splat.scale[:, 0]).astype(np.float32), -3.4e38, 3.4e38)
+        arr[:, 4] = np.clip(np.exp(splat.scale[:, 1]).astype(np.float32), -3.4e38, 3.4e38)
+        arr[:, 5] = np.clip(np.exp(splat.scale[:, 2]).astype(np.float32), -3.4e38, 3.4e38)
 
     byte_arr = np.frombuffer(result, dtype=np.uint8).reshape(splat.count, 32)
     byte_arr[:, 24] = splat.color[:, 0]

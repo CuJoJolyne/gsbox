@@ -106,11 +106,18 @@ def _merge_two(pos_a, pos_b, color_a, color_b, scale_a, scale_b, rot_a, rot_b,
     scale_out = np.array([_safe_log_sqrt(vals[0]), _safe_log_sqrt(vals[1]), _safe_log_sqrt(vals[2])], dtype=np.float32)
 
     qw, qx, qy, qz = _mat_to_quat(vecs)
+    # Normalize jointly (match Go's NormalizeRotationsF32Uint8)
+    q0 = qw; q1 = qx; q2 = qy; q3 = qz
+    if q0 < 0:
+        q0, q1, q2, q3 = -q0, -q1, -q2, -q3
+    qlen = math.sqrt(q0 * q0 + q1 * q1 + q2 * q2 + q3 * q3)
+    if qlen > 0:
+        q0 /= qlen; q1 /= qlen; q2 /= qlen; q3 /= qlen
     rot_out = np.array([
-        codec.encode_splat_rotation(qx),
-        codec.encode_splat_rotation(qy),
-        codec.encode_splat_rotation(qz),
-        codec.encode_splat_rotation(qw),
+        codec.clip_uint8(q1 * 128.0 + 128.0),
+        codec.clip_uint8(q2 * 128.0 + 128.0),
+        codec.clip_uint8(q3 * 128.0 + 128.0),
+        codec.clip_uint8(q0 * 128.0 + 128.0),
     ], dtype=np.uint8)
 
     return pos_out, color_out.astype(np.uint8), scale_out.astype(np.float32), rot_out, imp_a

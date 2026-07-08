@@ -4,7 +4,7 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from ..core.splat_data import SplatData
-from ..core.morton import V3MinMax, compute_xyz_min_max, sort_morton
+from ..core.morton import V3MinMax, compute_xyz_min_max, sort_morton, sort_morton
 
 FILE_SPLAT_COUNT_THRESHOLD = 409600
 
@@ -192,9 +192,11 @@ def _split_btree_node(node: BTreeNode, lod_levels: int):
     node_right.is_leaf = right_data.count <= node.cut_size
 
     if node_left.is_leaf:
-        node_left.lods = [TileMapping("", 0, left_data.count, None) for _ in range(lod_levels)]
+        node_left.lods = [TileMapping("", 0, left_data.count, None) if node_left.lod_counts.get(i, 0) > 0 else None
+                          for i in range(lod_levels)]
     if node_right.is_leaf:
-        node_right.lods = [TileMapping("", 0, right_data.count, None) for _ in range(lod_levels)]
+        node_right.lods = [TileMapping("", 0, right_data.count, None) if node_right.lod_counts.get(i, 0) > 0 else None
+                           for i in range(lod_levels)]
 
     node.children = [node_left, node_right]
     node.data = None
@@ -248,14 +250,17 @@ def build_tiles_from_btree(data: SplatData, root: BTreeNode, lod_levels: int,
             lod_lods.file_key = file_key
             lod_lods.offset = offset
             lod_lods.count = leaf.lod_counts[lod]
-            if splat_file.datas is not None and leaf.data is not None:
-                splat_file.datas.append(leaf.data)
+            if leaf.data is not None:
+                sort_morton(leaf.data)  # match Go: Morton sort leaf data before merge
+                if splat_file.datas is not None:
+                    splat_file.datas.append(leaf.data)
             offset += lod_lods.count
 
         files.append(splat_file)
         return splat_file
 
     for lod in range(lod_levels):
+        seq_counter[0] = 0  # match Go: reset seq per LOD level
         merge_nodes: List[BTreeNode] = []
 
         def collect_merge(n: BTreeNode) -> bool:

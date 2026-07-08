@@ -126,6 +126,7 @@ def _read_spz_v2v3(datas: bytes, header: SpzHeader) -> SplatData:
     shs = datas[off_sh:] if sh_dim > 0 else b''
 
     data = SplatData(n)
+    data.sh[:] = 128  # match Go: unused SH slots filled with 128
 
     for i in range(n):
         Progress.report(PHASE_READ, i, n)
@@ -197,6 +198,7 @@ def _read_spz_v4(raw: bytes, header: SpzHeader) -> SplatData:
         shs = compress.decompress_zstd(remaining[:zstd_sizes[5]])
 
     data = SplatData(n)
+    data.sh[:] = 128  # match Go: unused SH slots filled with 128
 
     for i in range(n):
         Progress.report(PHASE_READ, i, n)
@@ -364,8 +366,8 @@ def _write_spz_v4(file_path: str, data: SplatData, sh_degree: int):
         zstd_shs = compress.compress_zstd(bytes(shs))
         streams.append((zstd_shs, shs))
 
-    for zstd_data, _ in streams:
-        toc.extend(struct.pack('<QQ', len(zstd_data), 0))
+    for zstd_data, raw_data in streams:
+        toc.extend(struct.pack('<QQ', len(zstd_data), len(raw_data)))
 
     bts = bytearray()
     bts.extend(_spz_header_to_bytes(header))
