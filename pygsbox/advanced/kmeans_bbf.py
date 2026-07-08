@@ -295,5 +295,32 @@ def _bbf_assign_numba(points, tree, dim, max_bbf_nodes):
     labels = np.zeros(n, dtype=np.int32)
     pts = points.astype(np.float64, copy=False) if points.dtype == np.float64 else points.astype(np.float64)
     cts = flat.cents.astype(np.float64, copy=False) if flat.cents.dtype == np.float64 else flat.cents.astype(np.float64)
-    _bfs_jit(pts, cts, flat.idx, flat.axis, flat.left, flat.right, dim, max_bbf_nodes, labels)
+    _bfs_jit(pts, cts, flat.idx, flat.axis, flat.left, flat.right,
+             dim, max_bbf_nodes, labels)
     return labels
+
+
+if _HAS_NUMBA:
+    @numba.njit(cache=False, fastmath=True)
+    def _centroid_update_jit(points, labels, palette_size, dim, new_centroids, counts):
+        """Numba JIT centroid accumulation. Replaces np.add.at loops."""
+        n = len(labels)
+        for i in range(n):
+            c = labels[i]
+            for d in range(dim):
+                new_centroids[c, d] += points[i, d]
+            counts[c] += 1
+
+    @numba.njit(cache=False, fastmath=True)
+    def _centroid_divide_jit(new_centroids, old_centroids, counts, palette_size, dim):
+        """Numba JIT centroid division + empty cluster handling."""
+        for c in range(palette_size):
+            if counts[c] == 0:
+                for d in range(dim):
+                    new_centroids[c, d] = old_centroids[c, d]
+            else:
+                inv = 1.0 / float(counts[c])
+                for d in range(dim):
+                    new_centroids[c, d] *= inv
+                for d in range(dim, 45):
+                    new_centroids[c, d] = old_centroids[c, d]

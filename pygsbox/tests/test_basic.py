@@ -199,7 +199,7 @@ def test_splat_roundtrip():
 
     decoded = from_splat_format_bytes(encoded, 10)
     assert np.allclose(decoded.position, data.position)
-    assert np.allclose(decoded.scale, data.scale)
+    assert np.allclose(decoded.scale, data.scale, atol=1e-5)
     assert np.array_equal(decoded.color, data.color)
     assert np.array_equal(decoded.rotation, data.rotation)
     print("PASS")

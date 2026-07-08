@@ -121,23 +121,26 @@ def kmeans_sh(data: SplatData, sh_degree: int,
         else:
             labels = _bbf_assign(shs_f64, tree, dim, max_bbf_nodes)
 
-        # 3. Compute new centroids (only dim dimensions + full 45 for init)
+        # 3. Compute new centroids + handle empties
         new_centroids = np.zeros((palette_size, 45), dtype=np.float64)
         counts = np.zeros(palette_size, dtype=np.int32)
-        for d in range(dim):
-            np.add.at(new_centroids[:, d], labels, shs_f64[:, d])
-        np.add.at(counts, labels, 1)
 
-        # 4. Handle empty clusters: re-init from random data point
-        for c in range(palette_size):
-            if counts[c] == 0:
-                ridx = rng.integers(0, n)
-                new_centroids[c] = shs_f64[ridx]
-            else:
-                for d in range(dim):
-                    new_centroids[c, d] /= float(counts[c])
-                # keep existing values for dim..45
-                new_centroids[c, dim:] = centroids_f64[c, dim:]
+        if _HAS_NUMBA:
+            from .kmeans_bbf import _centroid_update_jit, _centroid_divide_jit
+            _centroid_update_jit(shs_f64, labels, palette_size, dim, new_centroids, counts)
+            _centroid_divide_jit(new_centroids, centroids_f64, counts, palette_size, dim)
+        else:
+            for d in range(dim):
+                np.add.at(new_centroids[:, d], labels, shs_f64[:, d])
+            np.add.at(counts, labels, 1)
+            for c in range(palette_size):
+                if counts[c] == 0:
+                    ridx = rng.integers(0, n)
+                    new_centroids[c] = shs_f64[ridx]
+                else:
+                    for d in range(dim):
+                        new_centroids[c, d] /= float(counts[c])
+                    new_centroids[c, dim:] = centroids_f64[c, dim:]
 
         centroids_f64 = new_centroids
 
