@@ -193,6 +193,11 @@ def process_data(data, args):
         print(f"[Info] Translating: X={tx} Y={ty} Z={tz}")
         transform.translate(data, tx, ty, tz)
 
+    # Morton sort for compressed formats (match Go's ProcessDatas → Sort)
+    out_path = args.get('output', '')
+    if out_path and not out_path.lower().endswith('.ply') and not out_path.lower().endswith('.splat'):
+        morton.sort_morton(data)
+
     return data
 
 

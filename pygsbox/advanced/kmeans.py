@@ -150,13 +150,14 @@ def kmeans_sh(data: SplatData, sh_degree: int,
     valid_mask = cnts[order] > 0
     order = order[valid_mask]
     sorted_palette_size = len(order)
+    orig_palette_size = palette_size
     if sorted_palette_size > 0 and sorted_palette_size < palette_size:
         sorted_centroids = np.full((sorted_palette_size, 45), 128, dtype=np.uint8)
         sorted_centroids[:, :dim] = centroids_uint8[order, :dim]
         centroids_uint8 = sorted_centroids
         palette_size = sorted_palette_size
-        # reindex labels
-        idx_map = np.full(palette_size, -1, dtype=np.int32)
+        # reindex labels: map old centroid indices to sorted indices
+        idx_map = np.full(orig_palette_size, -1, dtype=np.int32)
         idx_map[order] = np.arange(sorted_palette_size, dtype=np.int32)
         labels = idx_map[labels.astype(np.int32)]
 
