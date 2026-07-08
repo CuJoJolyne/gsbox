@@ -386,6 +386,8 @@ def normalize_rotations_float64(rw: int, rx: int, ry: int, rz: int) -> list:
     r2 = ry / 128.0 - 1.0
     r3 = rz / 128.0 - 1.0
     qlen = math.sqrt(r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3)
+    if qlen == 0.0:
+        return [1.0, 0.0, 0.0, 0.0]
     return [r0 / qlen, r1 / qlen, r2 / qlen, r3 / qlen]
 
 
