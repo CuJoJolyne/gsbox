@@ -385,6 +385,59 @@ python pygsbox/benchmark.py
 
 ---
 
+## 输出验证
+
+pygsbox 提供定量验证工具 `compare_sog.py`，支持三种验证模式：
+
+### 对比 Go 和 Python SOG 文件
+
+```bash
+python pygsbox/compare_sog.py --go go_output.sog --py py_output.sog
+```
+
+输出：文件结构对比、palette 大小、像素差异（注意：Morton 排序可能导致 splat 顺序不同，像素差异不反映数据错误）
+
+### 往返验证（SOG → 原始 PLY）
+
+```bash
+# Python 生成 SOG 的往返精度
+python pygsbox/compare_sog.py --orig input.ply --sog output.sog
+
+# Go 生成 SOG 的往返精度（同基准对比）
+python pygsbox/compare_sog.py --orig input.ply --go go_output.sog
+```
+
+输出：position/color/scale/rotation/SH 各属性的最大误差、均值、完全一致率
+
+### 自往返验证
+
+```bash
+python pygsbox/compare_sog.py --self --rt input.ply --sh 3
+```
+
+流程：PLY → pygsbox SOG → 读回 → 逐属性对比。完全在 Python 生态内闭环。
+
+### 验证原理
+
+SOG 编码是有损的（position 量化到 16-bit log-space，scale 量化到 uint8，SH 经过 K-Means 聚类），不能逐字节对比。正确的验证方法是 **KD-tree 位置匹配 + 语义化误差分析**：
+
+1. 用 KD-tree 将原始 PLY 每个 splat 匹配到 SOG 中位置最接近的 splat
+2. 对匹配对逐属性统计误差
+3. 旋转用**角度差**（度）而非 uint8 分量差
+4. Color 用 RGBA 分通道统计
+5. SH 按 band 分开统计并提供相对误差率
+
+理论容差：
+| 属性 | 容差 | 来源 |
+|------|:---:|------|
+| Position | <0.05 | uint16 量化 |
+| Scale | <0.1 | uint8 量化（1/16 log-step） |
+| Color | ≤1 | 编码往返同一性 |
+| Rotation | <5° | SOG 有损打包 |
+| SH | ~100%（相对） | K-Means 压缩有损 |
+
+---
+
 ## 许可证
 
 本项目继承自 [gsbox](https://github.com/gotoeasy/gsbox) 的许可证。
