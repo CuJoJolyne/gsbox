@@ -391,3 +391,33 @@ assert all(0 <= v <= 255 for v in (drw, drx, dry, drz))
 3. **Spec 的维护**本身就是开发工作。不是"先写 spec 再写代码"，而是"写 spec **就是**在开发"。spec 是交付物，代码是产物。
 4. **面向 Agent 设计**。目录结构、命名约定、注释风格，都需要让 Agent 能"一眼看懂"——这是 SDD 的工程纪律。
 5. **测试 = Spec 中的 Example 段**。不是单独维护的，每次改 spec 的 Example，Agent 就同步更新测试。
+
+
+---
+
+## 十、执行结果（2026-07 更新）
+
+### 已完成
+
+| 阶段 | 内容 | 状态 |
+|------|------|:--:|
+| Phase 1 | 基础设施（AGENTS.md, 模板, 目录树） | ✅ |
+| Phase 2 | 23 个模块 spec 文件（1853 行） | ✅ |
+| Phase 3 | 可重生成性验证（codec/splat_data，发现 4 个 spec 缺陷） | ✅ |
+| Phase 4 | PROGRESS.json SDD 扩展（22 模块追踪） | ✅ |
+| Phase 5 | Spec→测试自动生成（+6 测试，34 total） | ✅ |
+| Phase 6 | 代码生成脚本（暂缓，投资收益比低） | ⏸️ |
+
+### 关键发现
+
+**SDD 的边界**：spec 适合做"蛋糕底座"（接口契约、数据格式标注、代码规范），但在以下场景作用有限：
+
+1. **Go 对齐 bug**（12 个全部通过逐行读 Go 源码 + 逐字节对比发现）— spec 不可能描述这个精度级别
+2. **BBF 正确性验证**（23 个 spot 正确率 6% → 自主写 benchmark 发现）— spec 不涉及算法实现细节
+3. **性能优化**（numba JIT，100x 加速）— spec 不涉及性能
+4. **定量验证方法论**（KD-tree + 原始字节 + 语义化误差）— spec 无法预判分析路径
+
+**有效场景**：
+- subagent 可以只读 spec + AGENTS.md 就写出正确的 `codec.py` / `splat_data.py`
+- spec→test 自动生成保证了 spec 的可运行性
+- AGENTS.md 的规范（numpy 向量化、SplatData 列式存储）防止 subagent 写坏架构
