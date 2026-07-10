@@ -192,14 +192,26 @@ def _split_btree_node(node: BTreeNode, lod_levels: int):
     node_right.is_leaf = right_data.count <= node.cut_size
 
     if node_left.is_leaf:
-        node_left.lods = [TileMapping("", 0, left_data.count, None) if node_left.lod_counts.get(i, 0) > 0 else None
-                          for i in range(lod_levels)]
+        _split_leaf_by_lod(node_left, left_data, lod_levels)
     if node_right.is_leaf:
-        node_right.lods = [TileMapping("", 0, right_data.count, None) if node_right.lod_counts.get(i, 0) > 0 else None
-                           for i in range(lod_levels)]
+        _split_leaf_by_lod(node_right, right_data, lod_levels)
 
     node.children = [node_left, node_right]
     node.data = None
+
+
+def _split_leaf_by_lod(node: BTreeNode, data: SplatData, lod_levels: int):
+    """Split leaf data by LOD into separate TileMapping entries, matching Go."""
+    node.lods = []
+    for lod in range(lod_levels):
+        count = node.lod_counts.get(lod, 0)
+        if count > 0:
+            mask = data.lod == lod
+            lod_data = data.subset(mask)
+            tm = TileMapping("", 0, count, lod_data)
+            node.lods.append(tm)
+        else:
+            node.lods.append(None)
 
 
 def mask_to_bool_idx(size: int, indices: np.ndarray) -> np.ndarray:
@@ -250,10 +262,10 @@ def build_tiles_from_btree(data: SplatData, root: BTreeNode, lod_levels: int,
             lod_lods.file_key = file_key
             lod_lods.offset = offset
             lod_lods.count = leaf.lod_counts[lod]
-            if leaf.data is not None:
-                sort_morton(leaf.data)  # match Go: Morton sort leaf data before merge
+            if lod_lods.datas is not None:
+                sort_morton(lod_lods.datas)  # sort by Morton
                 if splat_file.datas is not None:
-                    splat_file.datas.append(leaf.data)
+                    splat_file.datas.append(lod_lods.datas)
             offset += lod_lods.count
 
         files.append(splat_file)
@@ -402,7 +414,8 @@ def lod_meta_to_json(meta: LodMeta) -> str:
 def _lod_node_to_dict(node: LodNode) -> dict:
     d = {}
     if node.bound is not None:
-        d["bound"] = {"min": node.bound.min, "max": node.bound.max}
+        d["bound"] = {"min": [round(v, 6) for v in node.bound.min],
+                       "max": [round(v, 6) for v in node.bound.max]}
     if node.lods is not None:
         json_lods: Any = {
             k: {"file": v.file, "offset": v.offset, "count": v.count}
