@@ -320,6 +320,7 @@ def cmd_cut(args: dict) -> None:
     import numpy as np
     from pygsbox.advanced import lod as lod_module
     from pygsbox.core.splat_data import SplatData
+    from pygsbox.formats.sog import write_sog
 
     print(f"[Info] Cut: {len(inputs)} inputs -> {out_path}")
     t0 = time.time()
@@ -332,6 +333,17 @@ def cmd_cut(args: dict) -> None:
 
     root = lod_module.build_btree(merged, cut_size=cut_size, lod_levels=max(lod_levels) + 1)
     tiles, meta = lod_module.build_tiles_from_btree(merged, root, lod_levels=max(lod_levels) + 1)
+
+    # Write SOG tile files (matching Go's WriteSogLodMeta)
+    out_dir = os.path.dirname(out_path) or '.'
+    for splat_file in tiles.files.values():
+        if splat_file.datas is None or splat_file.datas.count == 0:
+            continue
+        sog_path = os.path.join(out_dir, splat_file.url)
+        write_sog(sog_path, splat_file.datas, sh_degree=0, as_zip=True)
+        splat_file.datas = None  # free memory
+        print(f"  wrote {splat_file.url}")
+
     json_str = lod_module.lod_meta_to_json(meta)
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:

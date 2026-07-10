@@ -291,8 +291,51 @@ def build_tiles_from_btree(data: SplatData, root: BTreeNode, lod_levels: int,
         sh_degree=sh_degree, comment=comment,
     )
 
+    _compute_leaf_bounds(tiles)
+    _propagate_bounds(tiles.tree)
+
     lod_meta = _build_lod_meta(tiles)
     return tiles, lod_meta
+
+
+def _compute_leaf_bounds(tiles: SplatTiles) -> None:
+    """Compute AABB bound for each leaf node matching Go's calcLodMetaBound."""
+    for file_key, splat_file in tiles.files.items():
+        if splat_file.datas is None or splat_file.datas.count == 0:
+            continue
+        pos = splat_file.datas.position
+        bound = Bound(min=[float(np.min(pos[:, 0])), float(np.min(pos[:, 1])), float(np.min(pos[:, 2]))],
+                      max=[float(np.max(pos[:, 0])), float(np.max(pos[:, 1])), float(np.max(pos[:, 2]))])
+        # Attach bound to matching leaf nodes in tree
+        _attach_bound_to_leaves(tiles.tree, file_key, bound)
+
+
+def _attach_bound_to_leaves(node: SplatNode, file_key: str, bound: Bound) -> None:
+    if node.lods is not None:
+        for tm in node.lods:
+            if tm is not None and tm.file_key == file_key:
+                node.bound = bound
+                return
+    if node.children:
+        for child in node.children:
+            _attach_bound_to_leaves(child, file_key, bound)
+
+
+def _propagate_bounds(node: SplatNode) -> Optional[Bound]:
+    """Propagate bounds from leaves to root matching Go's setSplatTreeBound."""
+    if node.bound is not None:
+        return node.bound
+    if node.lods is not None:
+        return node.bound
+    if node.children is None or len(node.children) == 0:
+        return None
+    child_bounds = [b for child in node.children if (b := _propagate_bounds(child)) is not None]
+    if not child_bounds:
+        return None
+    mins = [min(b.min[i] for b in child_bounds) for i in range(3)]
+    maxs = [max(b.max[i] for b in child_bounds) for i in range(3)]
+    node.bound = Bound(min=mins, max=maxs)
+    return node.bound
 
 
 def _copy_to_splat_tree(bnode: BTreeNode, snode: SplatNode) -> None:
