@@ -27,13 +27,15 @@ def usage():
     print("  lod            Build LOD B-Tree tiles")
     print("  obj            Transform vertices in .obj file")
     print("  autocut        Auto LOD generation (simplify x5 + B-Tree)")
+    print("  cut            Combine multiple LOD models into lod-meta.json")
     print("  check_update   Check for latest pygsbox release")
     print("  Shortcut commands (same as convert):")
     print("    p2s, ply2splat     p2z, ply2spz     p2g, ply2glb")
     print("    z2p, spz2ply       z2g, spz2glb     g2p, glb2ply\n")
     print("Options:")
-    print("  -i,  --input <path>       Input file path")
+    print("  -i,  --input <path>       Input file path (repeatable)")
     print("  -o,  --output <path>      Output file path")
+    print("  -l,  --lod-level <int>    LOD level for input (repeatable, for cut)")
     print("  -sh, --shDegree <0-3>     SH degree for output (default: keep)")
     print("  -a,  --alpha <0-255>      Minimum alpha filter")
     print("  -rx, -ry, -rz <deg>       Rotation around X/Y/Z axis")
@@ -51,6 +53,7 @@ def usage():
     print("  pygsbox convert -i https://example.com/model.spz -o output.ply")
     print("  pygsbox info -i file.spx")
     print("  pygsbox autocut -i input.ply -o lod-meta.json")
+    print("  pygsbox cut -i lod0.ply -l 0 -i lod1.ply -l 1 -o lod-meta.json")
     print()
 
 
@@ -78,10 +81,12 @@ def parse_args(argv) -> Dict[str, Any]:
             if cmd in ('z2g',): cmd = 'spz2glb'
             if cmd in ('g2z',): cmd = 'glb2spz'
             args['command'] = cmd
-        elif a in ('info', 'simplify', 'lod', 'obj', 'autocut', 'check_update'):
+        elif a in ('info', 'simplify', 'lod', 'obj', 'autocut', 'check_update', 'cut'):
             args['command'] = a
         elif a in ('-i', '--input'):
-            i += 1; args['input'] = argv[i] if i < len(argv) else ''
+            i += 1; val = argv[i] if i < len(argv) else ''; args.setdefault('inputs', []).append(val); args['input'] = val
+        elif a in ('-l', '--lod-level'):
+            i += 1; args.setdefault('lodLevels', []).append(int(argv[i]) if i < len(argv) else 0)
         elif a in ('-o', '--output'):
             i += 1; args['output'] = argv[i] if i < len(argv) else ''
         elif a in ('-rx', '--rotateX'):
@@ -298,6 +303,43 @@ def cmd_autocut(args):
     print(f"[Info] Done in {__import__('time').time() - t0:.2f}s")
 
 
+def cmd_cut(args: dict) -> None:
+    inputs = args.get('inputs', [])
+    lod_levels = args.get('lodLevels', [])
+    if not inputs:
+        print("Error: -i required"); return
+    if not lod_levels:
+        lod_levels = [0] * len(inputs)
+    if len(inputs) != len(lod_levels):
+        print("Error: -i and -l pair mismatch"); return
+    out_path = args.get('output') or 'lod-meta.json'
+    cut_size = args.get('cutSize', 102400)
+    if cut_size <= 0:
+        print("Error: cut-size must be > 0"); return
+
+    import numpy as np
+    from pygsbox.advanced import lod as lod_module
+    from pygsbox.core.splat_data import SplatData
+
+    print(f"[Info] Cut: {len(inputs)} inputs -> {out_path}")
+    t0 = time.time()
+
+    merged = SplatData(0)
+    for input_path, lod_level in zip(inputs, lod_levels):
+        data, _ = _read_file(input_path)
+        data.lod = np.full(data.count, lod_level, dtype=np.uint16)
+        merged.append(data)
+
+    root = lod_module.build_btree(merged, cut_size=cut_size, lod_levels=max(lod_levels) + 1)
+    tiles, meta = lod_module.build_tiles_from_btree(merged, root, lod_levels=max(lod_levels) + 1)
+    json_str = lod_module.lod_meta_to_json(meta)
+    os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(json_str)
+    print(f"[Info] LOD meta written: {out_path} ({len(tiles.files)} tiles)")
+    print(f"[Info] Done in {time.time() - t0:.2f}s")
+
+
 def cmd_info(args):
     in_path = args.get('input')
     if not in_path:
@@ -362,6 +404,8 @@ def main():
         cmd_obj(args)
     elif cmd == 'autocut':
         cmd_autocut(args)
+    elif cmd == 'cut':
+        cmd_cut(args)
     elif cmd == 'check_update':
         print(check_update())
     elif cmd in ('convert', 'ply2splat', 'splat2ply', 'ply2spz', 'spz2ply',
