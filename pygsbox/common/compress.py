@@ -64,11 +64,8 @@ def compress_webp(data: bytes, width: int = 0, height: int = 0, quality: int = 9
     needed = width * height * 4
     if len(data) < needed:
         padded = bytearray(data)
-        pad_pixels = (needed - len(data)) // 4
-        padded.extend(b'\xff\xff\xff\xff' * pad_pixels)
         remaining = needed - len(padded)
-        if remaining > 0:
-            padded.extend(b'\x00' * remaining)
+        padded.extend(b'\x00' * remaining)
         data = bytes(padded)
 
     img = Image.frombuffer("RGBA", (width, height), data, "raw", "RGBA", 0, 1)
@@ -90,8 +87,9 @@ def decompress_webp(data: bytes) -> tuple:
 
 
 def compute_width_height(length: int) -> tuple:
-    w = int(np.ceil(np.sqrt(length) / 4.0) * 4.0)
-    h = int(np.ceil(length / w / 4.0) * 4.0)
+    import math
+    w = int(math.ceil(math.sqrt(float(length)) / 4.0) * 4.0)
+    h = int(math.ceil(float(length) / float(w) / 4.0) * 4.0)
     return w, h
 
 

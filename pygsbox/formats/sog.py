@@ -2,7 +2,7 @@ import os
 import json
 import math
 import numpy as np
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict, List, Any
 from ..core.splat_data import SplatData
 from ..core.morton import V3MinMax, compute_xyz_log_min_max
 from ..common import codec, compress, file_utils
@@ -351,10 +351,14 @@ def _read_sog_v2(meta: SogMeta, dir_path: str) -> Tuple[SogHeader, SplatData]:
     return header, data
 
 
-def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip: bool = True, quality: int = 5):
+def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip: bool = True, quality: int = 5,
+              sh_centroids: Optional[Any] = None):
     os.makedirs(os.path.dirname(os.path.abspath(sog_or_json_path)) or '.', exist_ok=True)
 
     from ..common.progress import Progress, PHASE_WRITE
+    from ..advanced.kmeans import quality_to_webp_quality
+
+    wq = quality_to_webp_quality(quality) if as_zip else 90
 
     dir_path = file_utils.dir_name(sog_or_json_path)
     is_sog = not sog_or_json_path.lower().endswith("meta.json")
@@ -368,22 +372,23 @@ def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip
     files = []
 
     Progress.report(PHASE_WRITE, 0, 100)
-    means_files, mm = _write_sog_means(work_dir, data)
+    means_files, mm = _write_sog_means(work_dir, data, wq)
     files.extend(means_files)
     Progress.report(PHASE_WRITE, 25, 100)
 
-    files.extend(_write_sog_scales(work_dir, data))
+    files.extend(_write_sog_scales(work_dir, data, wq))
     Progress.report(PHASE_WRITE, 40, 100)
 
-    files.extend(_write_sog_quats(work_dir, data))
+    files.extend(_write_sog_quats(work_dir, data, wq))
     Progress.report(PHASE_WRITE, 55, 100)
 
-    files.extend(_write_sog_sh0(work_dir, data))
+    files.extend(_write_sog_sh0(work_dir, data, wq))
     Progress.report(PHASE_WRITE, 70, 100)
 
     palette_size = 0
     if sh_degree > 0:
-        shN_files, palette_size = _write_sog_shN(work_dir, data, sh_degree, quality=quality)
+        shN_files, palette_size = _write_sog_shN(work_dir, data, sh_degree, quality=quality,
+                                                     sh_centroids=sh_centroids)
         files.extend(shN_files)
     Progress.report(PHASE_WRITE, 85, 100)
 
@@ -396,7 +401,7 @@ def write_sog(sog_or_json_path: str, data: SplatData, sh_degree: int = 0, as_zip
     return
 
 
-def _write_sog_means(dir_path: str, data: SplatData) -> Tuple[List[str], V3MinMax]:
+def _write_sog_means(dir_path: str, data: SplatData, webp_quality: int = 90) -> Tuple[List[str], V3MinMax]:
     mm = compute_xyz_log_min_max(data)
     count = data.count
 
@@ -421,8 +426,8 @@ def _write_sog_means(dir_path: str, data: SplatData) -> Tuple[List[str], V3MinMa
     path_l = os.path.join(dir_path, "means_l.webp")
     path_u = os.path.join(dir_path, "means_u.webp")
 
-    webp_l = compress.compress_webp(bytes(means_l))
-    webp_u = compress.compress_webp(bytes(means_u))
+    webp_l = compress.compress_webp(bytes(means_l), quality=webp_quality)
+    webp_u = compress.compress_webp(bytes(means_u), quality=webp_quality)
 
     file_utils.write_file_bytes(path_l, webp_l)
     file_utils.write_file_bytes(path_u, webp_u)
@@ -430,7 +435,7 @@ def _write_sog_means(dir_path: str, data: SplatData) -> Tuple[List[str], V3MinMa
     return [path_l, path_u], mm
 
 
-def _write_sog_scales(dir_path: str, data: SplatData) -> List[str]:
+def _write_sog_scales(dir_path: str, data: SplatData, webp_quality: int = 90) -> List[str]:
     count = data.count
     rgba = bytearray(count * 4)
     for i in range(count):
@@ -438,13 +443,13 @@ def _write_sog_scales(dir_path: str, data: SplatData) -> List[str]:
         rgba[i * 4 + 1] = codec.encode_spx_scale(float(data.scale[i, 1]))
         rgba[i * 4 + 2] = codec.encode_spx_scale(float(data.scale[i, 2]))
         rgba[i * 4 + 3] = 255
-    webp = compress.compress_webp(bytes(rgba))
+    webp = compress.compress_webp(bytes(rgba), quality=webp_quality)
     path = os.path.join(dir_path, "scales.webp")
     file_utils.write_file_bytes(path, webp)
     return [path]
 
 
-def _write_sog_quats(dir_path: str, data: SplatData) -> List[str]:
+def _write_sog_quats(dir_path: str, data: SplatData, webp_quality: int = 90) -> List[str]:
     count = data.count
     rgba = bytearray(count * 4)
     for i in range(count):
@@ -456,13 +461,13 @@ def _write_sog_quats(dir_path: str, data: SplatData) -> List[str]:
         rgba[i * 4 + 1] = g
         rgba[i * 4 + 2] = b
         rgba[i * 4 + 3] = a
-    webp = compress.compress_webp(bytes(rgba))
+    webp = compress.compress_webp(bytes(rgba), quality=webp_quality)
     path = os.path.join(dir_path, "quats.webp")
     file_utils.write_file_bytes(path, webp)
     return [path]
 
 
-def _write_sog_sh0(dir_path: str, data: SplatData) -> List[str]:
+def _write_sog_sh0(dir_path: str, data: SplatData, webp_quality: int = 90) -> List[str]:
     count = data.count
     rgba = bytearray(count * 4)
     for i in range(count):
@@ -470,13 +475,14 @@ def _write_sog_sh0(dir_path: str, data: SplatData) -> List[str]:
         rgba[i * 4 + 1] = int(data.color[i, 1])
         rgba[i * 4 + 2] = int(data.color[i, 2])
         rgba[i * 4 + 3] = int(data.color[i, 3])
-    webp = compress.compress_webp(bytes(rgba))
+    webp = compress.compress_webp(bytes(rgba), quality=webp_quality)
     path = os.path.join(dir_path, "sh0.webp")
     file_utils.write_file_bytes(path, webp)
     return [path]
 
 
-def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int, quality: int = 5) -> Tuple[List[str], int]:
+def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int, quality: int = 5,
+                   sh_centroids: Optional[Any] = None) -> Tuple[List[str], int]:
     if data.count == 0:
         return [], 0
 
@@ -487,7 +493,12 @@ def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int, quality: int 
     width_map = {1: 96, 2: 512, 3: 960}
     centroids_width = width_map.get(sh_degree, 960)
 
-    centroids, labels, palette_size = rewrite_sh_by_kmeans(data, sh_degree, quality=quality)
+    if sh_centroids is not None:
+        centroids = sh_centroids
+        palette_size = len(centroids)
+        labels = data.palette_idx[:data.count]
+    else:
+        centroids, labels, palette_size = rewrite_sh_by_kmeans(data, sh_degree, quality=quality)
 
     if centroids is None or palette_size == 0:
         return [], 0
@@ -520,15 +531,15 @@ def _write_sog_shN(dir_path: str, data: SplatData, sh_degree: int, quality: int 
 
 
 def _write_sog_meta(dir_path: str, data: SplatData, mm: V3MinMax, palette_size: int, sh_degree: int):
-    scale_codebook = [codec.decode_spx_scale(i) for i in range(256)]
-    sh0_codebook = [codec.decode_splat_color(i) for i in range(256)]
+    scale_codebook = [round(codec.decode_spx_scale(i), 6) for i in range(256)]
+    sh0_codebook = [round(codec.decode_splat_color(i), 6) for i in range(256)]
 
     meta = {
         "version": 2,
         "count": data.count,
         "means": {
-            "mins": [mm.min_x, mm.min_y, mm.min_z],
-            "maxs": [mm.max_x, mm.max_y, mm.max_z],
+            "mins": [round(mm.min_x, 6), round(mm.min_y, 6), round(mm.min_z, 6)],
+            "maxs": [round(mm.max_x, 6), round(mm.max_y, 6), round(mm.max_z, 6)],
             "files": ["means_l.webp", "means_u.webp"],
         },
         "scales": {
@@ -545,7 +556,7 @@ def _write_sog_meta(dir_path: str, data: SplatData, mm: V3MinMax, palette_size: 
     }
 
     if palette_size > 0 and sh_degree > 0:
-        shn_codebook = [codec.decode_splat_sh(i) for i in range(256)]
+        shn_codebook = [round(codec.decode_splat_sh(i), 6) for i in range(256)]
         meta["shN"] = {
             "count": palette_size,
             "bands": sh_degree,

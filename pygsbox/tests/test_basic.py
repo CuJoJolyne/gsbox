@@ -16,6 +16,7 @@ from pygsbox.common.codec import (
     spz_encode_scale, spz_decode_scale,
     spz_encode_rotations_v3v4, spz_decode_rotations_v3v4,
     sog_encode_rotations, sog_decode_rotations,
+    encode_splat_sh,
 )
 from pygsbox.core.morton import V3MinMax, compute_xyz_min_max, sort_morton, encode_morton3
 
@@ -575,6 +576,43 @@ def test_compressed_ply_roundtrip():
     print("PASS")
 
 
+def test_official_ply_sh_channel_major_mapping():
+    """Test official PLY f_rest channel-major order maps to basis-major SplatData.sh."""
+    print("Test: Official PLY SH order...", end=" ")
+    from pygsbox.formats.ply import read_ply, read_ply_header, write_ply
+
+    data = SplatData(1)
+    data.rotation[0] = [255, 128, 128, 128]
+    data.scale[0] = [-4.0, -4.0, -4.0]
+    data.color[0] = [128, 128, 128, 128]
+    data.sh[0] = np.arange(45, dtype=np.uint8) + 50
+
+    with tempfile.NamedTemporaryFile(suffix='.ply', delete=False) as f:
+        path = f.name
+    try:
+        write_ply(path, data, sh_degree=3)
+        hdr = read_ply_header(path)
+        with open(path, 'rb') as f:
+            f.seek(hdr.header_length + 6 * 4)
+            raw_sh = f.read(45 * 4)
+        stored = [
+            encode_splat_sh(struct.unpack('<f', raw_sh[i * 4:i * 4 + 4])[0])
+            for i in range(45)
+        ]
+        expected_stored = [
+            int(data.sh[0, basis * 3 + channel])
+            for channel in range(3)
+            for basis in range(15)
+        ]
+        assert stored == expected_stored
+
+        _, decoded = read_ply(path)
+        assert np.array_equal(decoded.sh[0], data.sh[0])
+    finally:
+        os.unlink(path)
+    print("PASS")
+
+
 def run_all_tests():
     """Run all tests."""
     print("\n" + "=" * 50)
@@ -616,6 +654,7 @@ def run_all_tests():
         test_transform_quaternion,
         test_spx_v3_roundtrip,
         test_compressed_ply_roundtrip,
+        test_official_ply_sh_channel_major_mapping,
     ]
 
     passed = 0

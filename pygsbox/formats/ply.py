@@ -223,19 +223,17 @@ def _read_official_ply_data(file_path: str, header: PlyHeader) -> SplatData:
     # SH handling (vectorized)
     sh_degree = header.max_sh_degree()
     if sh_degree > 0:
-        sh_count = {1: 9, 2: 24, 3: 45}.get(sh_degree, 0)
-        sh_fields = []
-        for sh_i in range(sh_count):
-            prop = f'f_rest_{sh_i}'
-            if prop in dtype.names:  # type: ignore[operator]
-                sh_fields.append(prop)
-        if sh_fields:
-            sh_vals = np.column_stack([
-                records[n].astype(np.float32) for n in sh_fields
-            ])
-            data.sh[:, :sh_count] = np.clip(
-                np.round(sh_vals * 128.0) + 128, 0, 255
-            ).astype(np.uint8)
+        data.sh[:, :] = 128
+        sh_dim = {1: 3, 2: 8, 3: 15}.get(sh_degree, 0)
+        for basis in range(sh_dim):
+            for channel in range(3):
+                prop = f'f_rest_{basis + channel * sh_dim}'
+                if prop in dtype.names:  # type: ignore[operator]
+                    data.sh[:, basis * 3 + channel] = np.clip(
+                        np.round(records[prop].astype(np.float32) * 128.0) + 128,
+                        0,
+                        255,
+                    ).astype(np.uint8)
 
     return data
 
@@ -626,7 +624,8 @@ def write_ply(file_path: str, data: SplatData, comment: str = "", sh_degree: int
     os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
 
     has_sh = sh_degree > 0
-    sh_count = {1: 9, 2: 24, 3: 45}.get(sh_degree, 0)
+    sh_dim = {1: 3, 2: 8, 3: 15}.get(sh_degree, 0)
+    sh_count = sh_dim * 3
 
     header_lines = [
         "ply",
@@ -675,8 +674,13 @@ def write_ply(file_path: str, data: SplatData, comment: str = "", sh_degree: int
 
             if has_sh:
                 sh_vals = []
-                for sh_i in range(sh_count):
-                    sh_vals.append(codec.decode_splat_sh(int(data.sh[i, sh_i])))
+                for channel in range(3):
+                    for basis in range(sh_dim):
+                        sh_vals.append(
+                            codec.decode_splat_sh(
+                                int(data.sh[i, basis * 3 + channel])
+                            )
+                        )
                 row.extend(np.array(sh_vals, dtype=np.float32).tobytes())
 
             opacity = codec.decode_splat_opacity(int(data.color[i, 3]))

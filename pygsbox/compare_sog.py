@@ -14,7 +14,7 @@ Methodology:
   with tight distance threshold (0.01), followed by per-attribute error
   statistics (color, scale, rotation, SH).
 """
-import sys, os, argparse, tempfile, json, struct
+import sys, os, argparse, tempfile, json, struct, zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import numpy as np

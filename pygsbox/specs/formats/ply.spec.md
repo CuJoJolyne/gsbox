@@ -45,6 +45,7 @@ min/max for x, y, z, scale_x, scale_y, scale_z, r, g, b.
 
 ### 3.2 `write_ply(file_path: str, data: SplatData, comment: str = "", sh_degree: int = 0) -> None`
 - **Description**: Write official 3DGS PLY. Per-row: xyz(float32×3), f_dc×3, [f_rest×N], opacity, scale×3, rot×4.
+- **SH order**: Write `f_rest` in official channel-major order. For each channel R/G/B, write all bases from internal `data.sh[:, basis*3+channel]`.
 
 ### 3.3 `write_compressed_ply(file_path: str, data: SplatData, sh_degree: int = 0, comment: str = "") -> None`
 - **Description**: Write SuperSplat compressed PLY with 256-splat chunks.
@@ -56,7 +57,7 @@ min/max for x, y, z, scale_x, scale_y, scale_z, r, g, b.
 2. Build structured numpy dtype from header property offsets
 3. np.frombuffer(raw_data, dtype=..., count=vertex_count)
 4. Extract position, color (encode via SH_C0), opacity (sigmoid), scale (log), rotation (normalize)
-5. If SH: extract f_rest fields, encode via encode_splat_sh
+5. If SH: convert official PLY channel-major `f_rest` order into internal basis-major `SplatData.sh` order: `data.sh[:, basis*3+channel] = encode_splat_sh(f_rest_{basis + channel*sh_dim})`. Fill unused SH slots with 128.
 ```
 
 ## 5. Compressed PLY Format

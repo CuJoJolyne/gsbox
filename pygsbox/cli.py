@@ -44,7 +44,7 @@ def usage():
     print("  -to, --transform-order    Transform order [RST,RTS,SRT,STR,TRS,TSR]")
     print("  -ov, --output-version <v> SPZ version (2/3/4) or SPX version (1/2/3)")
     print("  -bf, --block-format <id>  SPX block format ID (default: 220)")
-    print("  -q,  --quality <1-100>    WebP/encoding quality (default: 90)")
+    print("  -q,  --quality <1-9>      encoding quality (default: 5)")
     print("  -cs, --cut-size <int>     B-Tree leaf node size (default: 102400)")
     print("  -v,  --version            Show version")
     print("  -h,  --help               Show this help\n")
@@ -114,7 +114,7 @@ def parse_args(argv) -> Dict[str, Any]:
         elif a in ('-bf', '--block-format'):
             i += 1; args['blockFormat'] = int(argv[i]) if i < len(argv) else 0
         elif a in ('-q', '--quality'):
-            i += 1; args['quality'] = int(argv[i]) if i < len(argv) else 90
+            i += 1; args['quality'] = max(1, min(int(argv[i]) if i < len(argv) else 5, 9))
         elif a in ('-cs', '--cut-size'):
             i += 1; args['cutSize'] = int(argv[i]) if i < len(argv) else 102400
         elif a.startswith('-'):
@@ -320,28 +320,45 @@ def cmd_cut(args: dict) -> None:
     import numpy as np
     from pygsbox.advanced import lod as lod_module
     from pygsbox.core.splat_data import SplatData
+    from pygsbox.core.morton import sort_morton
     from pygsbox.formats.sog import write_sog
 
     print(f"[Info] Cut: {len(inputs)} inputs -> {out_path}")
+    quality = args.get('quality', 5)
     t0 = time.time()
 
+    max_sh = 0
     merged = SplatData(0)
     for input_path, lod_level in zip(inputs, lod_levels):
-        data, _ = _read_file(input_path)
+        data, sh = _read_file(input_path)
+        max_sh = max(max_sh, sh)
         data.lod = np.full(data.count, lod_level, dtype=np.uint16)
         merged.append(data)
 
-    root = lod_module.build_btree(merged, cut_size=cut_size, lod_levels=max(lod_levels) + 1)
-    tiles, meta = lod_module.build_tiles_from_btree(merged, root, lod_levels=max(lod_levels) + 1)
+    sort_morton(merged)
 
-    # Write SOG tile files (matching Go's WriteSogLodMeta)
+    lod_levels_count = max(lod_levels) + 1
+
+    sh_centroids = None
+    if max_sh > 0:
+        from pygsbox.advanced.kmeans import rewrite_sh_by_kmeans
+        t0_km = time.time()
+        print(f"[Info] Computing global SH palette on {merged.count} points...")
+        sh_centroids, _, _ = rewrite_sh_by_kmeans(merged, max_sh, quality=quality)
+        print(f"[Info] Global SH palette done in {time.time() - t0_km:.1f}s "
+              f"(palette_size={len(sh_centroids) if sh_centroids is not None else 0})")
+
+    root = lod_module.build_btree(merged, cut_size=cut_size, lod_levels=lod_levels_count)
+    tiles, meta = lod_module.build_tiles_from_btree(merged, root, lod_levels=lod_levels_count, sh_degree=max_sh)
+
     out_dir = os.path.dirname(out_path) or '.'
     for splat_file in tiles.files.values():
         if splat_file.datas is None or splat_file.datas.count == 0:
             continue
         sog_path = os.path.join(out_dir, splat_file.url)
-        write_sog(sog_path, splat_file.datas, sh_degree=0, as_zip=True)
-        splat_file.datas = None  # free memory
+        write_sog(sog_path, splat_file.datas, sh_degree=max_sh, as_zip=True, quality=quality,
+                  sh_centroids=sh_centroids)
+        splat_file.datas = None
         print(f"  wrote {splat_file.url}")
 
     json_str = lod_module.lod_meta_to_json(meta)

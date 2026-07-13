@@ -229,3 +229,239 @@ pygsbox/
 ```
 
 **状态**：28 tests PASS · mypy 0 errors · `pip install -e .` 可用 · `dist/pygsbox.exe` 可构建
+
+---
+
+## Bug 分析：cut 命令缺失 SH 数据
+
+### 背景
+
+Go 版 `gsbox cut` 后，SOG 文件内部包含 8 个子文件（`means_l`, `means_u`, `quats`, `scales`, `sh0`, `shN_centroids`, `shN_labels`, `meta.json`），其中 `shN_centroids` 和 `shN_labels` 是球谐函数（SH）K-Means 压缩后的聚类中心和标签。
+
+### 发现过程
+
+用定量对比方法发现异常——文件计数差异是最直接的信号：
+
+| | Go 0_0.sog | Py 0_0.sog |
+|---|---|---|
+| 内部文件数 | 8 | 6 |
+| 缺失 | — | shN_centroids, shN_labels |
+
+**发现路径**：解压 ZIP → 列出文件 → 计数不同 → 定位问题所在。
+
+直接原因：Python `write_sog` 的 `sh_degree=0` 会跳过所有 SH 数据的编码和写入。这不是编解码 bug，而是元数据传递断链。
+
+### 根因分析
+
+**代码链路问题**：cmd_cut 的实现中存在两处断点：
+
+```python
+# 断点 1：丢弃了 _read_file 返回的 sh_degree
+data, _ = _read_file(input_path)   # ← sh_degree 被丢弃
+
+# 断点 2：硬编码 sh_degree=0
+write_sog(sog_path, splat_file.datas, sh_degree=0, as_zip=True)  # ← 强行无 SH
+```
+
+**实际影响**：`_read_file` 返回的 tuple 第二个元素就是从头文件解析的 SH 度数（PLY=3, SPZ=头部字段），但被 `_` 丢弃，下游永远拿到 0。
+
+`build_tiles_from_btree` 内部调用 `kmeans_sh(data, sh_degree=0)` → 直接被短路（SH 维度为 0），不生成 centroids/labels。`write_sog` 拿到 `sh_degree=0` → `has_sh = False`，跳过 `shN_centroids.webp` 和 `shN_labels.webp` 的写入。
+
+### 修复方案
+
+**只需 6 行改动**（`cli.py:328-343`）：
+
+```python
+# Before
+merged = SplatData(0)
+for input_path, lod_level in zip(inputs, lod_levels):
+    data, _ = _read_file(input_path)                              # ← 丢弃 sh
+    ...
+write_sog(sog_path, splat_file.datas, sh_degree=0, as_zip=True)   # ← 硬编码 0
+
+# After
+max_sh = 0
+merged = SplatData(0)
+for input_path, lod_level in zip(inputs, lod_levels):
+    data, sh = _read_file(input_path)                              # ← 捕获 sh
+    max_sh = max(max_sh, sh)                                       # ← 多输入取 max
+    ...
+write_sog(sog_path, splat_file.datas, sh_degree=max_sh, as_zip=True)  # ← 传递真实值
+```
+
+同时传递给 `build_tiles_from_btree(..., sh_degree=max_sh)` 确保 K-Means 生成 SH centroids/labels。
+
+### 验证结果
+
+**测试命令**（对齐 Go 的 3-LOD 输入 + cut_size=30000）：
+
+```
+pygsbox cut \
+  -i reduction_0.4_point_cloud_y.ply  -l 0 \
+  -i reduction_0.1_point_cloud_y.ply  -l 1 \
+  -i reduction_0.025_point_cloud_y.ply -l 2 \
+  -o py\lod-meta.json -cs 30000
+```
+
+**逐文件对比**（11 tiles，compressed = ZIP 内总字节，raw = 所有 WebP 解压后像素字节和）：
+
+| 文件 | Go (K) | Py (K) | Δ |
+|------|:---:|:---:|:---:|
+| 0_0.sog | 3018 | 3023 | +0.2% |
+| 0_1.sog | 3047 | 3049 | +0.1% |
+| 0_2.sog | 2993 | 3012 | +0.6% |
+| 0_3.sog | 2992 | 3016 | +0.8% |
+| 0_4.sog | 3003 | 3008 | +0.2% |
+| 0_5.sog | 2998 | 3035 | +1.2% |
+| 0_6.sog | 3083 | 3108 | +0.8% |
+| 0_7.sog | 2973 | 2972 | -0.0% |
+| 1_0.sog | 3034 | 3062 | +0.9% |
+| 1_1.sog | 3035 | 3065 | +1.0% |
+| 2_0.sog | 1567 | 1568 | +0.1% |
+
+**汇总**：
+
+| 指标 | Go | Py | 评估 |
+|---|---|---|---|
+| tile 数 | 11 | 11 | 对齐 |
+| SH 文件 | YES | YES | **修复确认** |
+| raw 总量 | 278,481K | 278,481K | **0% 差异** |
+| compressed | 31,742K | 31,915K | +0.5% |
+| 压缩比 | 0.114 | 0.115 | 接近 |
+
+### 关键洞察
+
+1. **raw 完全一致证明编码正确**：`means_l.webp` 等 5 个主通道的 raw 字节量完全相等，说明解压后像素数一致 → 写入前每帧的宽高和像素数对齐 → 编码逻辑无差异。
+
+2. **compressed 差异来自压缩库而非数据**：Go 用的 `gen2brain/webp`（CGO），Python 用的 `Pillow`（libwebp）。同一张 684×684 的 PNG 分别用两种库做 WebP lossless 编码，输出大小天然有 ±1% 的抖动。0.5% 是正常水平。
+
+3. **shN_centroids 尺寸固定**：`3840K = 15 × 256 × 256 × 4`（SH=3 的 `15*3=45` 个分量，分配给 `45*3=135` 个 centroids，凑整为 256×256 WebP 画布），Go 和 Py 完全一致——K-Means 产生的 centroids 数量固定。
+
+4. **这类 bug 的特点**：不是编解码错误（否则 roundtrip 测试会暴露），而是**数据传递链上的沉默丢失**——函数签名有参数，调用方传了 0，没有报错或警告。Go 用 struct 默认零值同样存在这个陷阱（Go 侧 sh_degree 也是可配置参数，传 0 同样丢 SH）。
+
+---
+
+## Bug 分析：Python SOG 文件比 Go 大 10%（shN_centroids.webp 根因）
+
+> 分析日期：2026-07-13  
+> 分析人：宪宪 / 砚砱 / 金哥  
+> 根因定位：砚砱  
+> 验证：宪宪
+
+### 背景
+
+同一输入（3-LOD PLY，`-q 9 -cs 30000`），Go 输出 48.40 MB，Python 输出 53.30 MB（+10.1%）。多轮迭代未能收敛。
+
+### 逐步定位方法
+
+**Step 1 — 文件级大小扫描**：解压每个 `.sog`，逐文件对比 Go vs Python 字节数：
+
+```
+means_l.webp:       +32 B   (+0.0%)
+means_u.webp:       +64 B   (+0.0%)
+scales.webp:         +0 B   (0.0%)
+quats.webp:       -6786 B   (-0.9%)
+sh0.webp:        +15134 B   (+2.1%)
+shN_labels.webp:  -7724 B   (-2.0%)
+shN_centroids.webp: +474,118 B  ← 占 99% 的差异
+```
+
+**Step 2 — 像素级分析**：解压 WebP，对比像素统计。关键发现：
+
+| 指标 | Go | Python |
+|------|----|----|
+| unique 像素数 | 62,828 | 184,641（**3×**） |
+| shN_centroids.webp 大小 | 1.45 MB | 1.92 MB |
+
+**Step 3 — WebP 压缩机制分析（宪宪）**：
+
+WebP Lossless 内部有 **Subtract-Green transform**：对每个像素存储 `R-G` 和 `B-G` 而非原始 RGB。若 R≈G≈B（灰色/近灰图像），变换后接近全零 → 熵极低 → 极佳压缩比。
+
+计算 centroid 图像的 R-G、B-G 分布：
+
+| 版本 | R-G std | B-G std | R=G=B 比例 |
+|------|---------|---------|-----------|
+| Go | **3.86** | **4.99** | **17.6%** |
+| Python（旧） | 16.58 | 17.47 | 0.6% |
+
+Python 的 centroid 图像 R-G std 是 Go 的 **4.3 倍** → Subtract-Green transform 几乎无效 → 文件大 32.7%。
+
+**Step 4 — 数学验证（宪宪）**：
+
+读取原始 PLY，计算生 SH 数据的 R-G 相关性（batch over 1.91M 点）：
+
+```
+生数据 R-G std = 3.499
+生数据 B-G std = 4.249
+```
+
+与 **Go centroid（3.86）完全一致**，与 **Python centroid（16.58）严重不符**。
+
+**数学定论**：正确的 K-Means 聚类均值必须保持输入数据的通道相关性。Python centroid 的 R-G std 是生数据的 4.7 倍，**数学上不可能是正确的聚类均值** → 存在 bug。
+
+**Step 5 — 根因定位（砚砱）**：
+
+PLY 标准 SH 存储顺序为 `f_rest_{basis + channel * sh_dim}`（channel-major）：
+- `f_rest_0..14` = R 通道15 个 SH 函数
+- `f_rest_15..29` = G 通道15 个 SH 函数
+- `f_rest_30..44` = B 通道15 个 SH 函数
+
+Go 内部 `SH45` 是 **INTERLEAVED**（basis-major）：
+`SH45[basis*3+0], SH45[basis*3+1], SH45[basis*3+2]` = 同一 SH 函数的 R, G, B
+
+**Python 旧版 reader 直接按顺序塞**，导致 `data.sh` 的布局成为 PLANAR（R×15，G×15，B×15）。
+
+后续写 centroid 像素时，`shs[k*3+0], shs[k*3+1], shs[k*3+2]`：
+- Go（INTERLEAVED）→ 同一 SH 函数的 R, G, B → **自然相关（R≈G≈B）**
+- Python 旧版（PLANAR）→ R 通道三个不同 SH 函数 → **通道不相关**
+
+### 修复
+
+`ply.py` official PLY reader（行 228-236）：
+
+```python
+# 修复前（顺序直塞）：
+data.sh[:, i] = encode(records[f'f_rest_{i}'])
+
+# 修复后（channel-major → basis-major 转换）：
+for basis in range(sh_dim):
+    for channel in range(3):
+        prop = f'f_rest_{basis + channel * sh_dim}'
+        data.sh[:, basis * 3 + channel] = encode(records[prop])
+```
+
+同步修复 PLY writer 的 `f_rest` 写出顺序，确保 read ↔ write 对称。
+
+### 验证结果
+
+重新生成 py-q9-fixed（2.51M 点，814s，palette_size=65504）：
+
+| 版本 | 总大小 | vs Go |
+|------|--------|-------|
+| Go | 48.40 MB | 基准 |
+| Python（修复前） | 53.30 MB | **+10.1%** |
+| **Python（修复后）** | **48.36 MB** | **-0.1%** ✅ |
+
+shN_centroids R-G std：Go=3.862，修复后 Python=3.870（差值 < 0.5%）。
+
+### 核心经验
+
+1. **WebP 压缩质量与 R-G 相关性直接挂钩**：对 3DGS SH centroid 图像，自然场景 R≈G≈B（R-G std≈4），Subtract-Green 可将熵压缩到接近最优。任何破坏这个相关性的 bug 都会造成 ~30%+ 的文件膨胀。
+
+2. **数学验证法**：生数据的通道分布是 centroid 的天花板参考。若 centroid R-G std >> 生数据 R-G std，说明存在数据损坏或布局错误，而非 K-Means 收敛问题。
+
+3. **PLY SH 的两种 layout 不能混淆**：
+   - **文件层（PLY f_rest）**：channel-major，`f_rest_{basis + channel * dim}`，先 basis 内循环，channel 外循环
+   - **内存层（SH45/data.sh）**：basis-major（INTERLEAVED），`sh[basis*3 + channel]`，同一 basis 的三通道紧邻
+   - **转换公式**：`data.sh[:, basis*3+channel] = f_rest[basis + channel*dim]`
+
+4. **"文件大但功能正常"是隐蔽 bug 的特征**：roundtrip 测试、功能测试全绿，但输出尺寸异常。需要**定量对比（文件大小、压缩率、像素统计）**才能发现。加入 Go vs Py 文件大小回归检查可防止此类问题复现。
+
+5. **诊断路径标准化**：
+   ```
+   总大小差异
+     → 逐tile逐文件大小扫描（定位主差异文件）
+     → 像素级统计（unique pixels、R-G std）
+     → 与生数据对比（数学验证正确性边界）
+     → 追溯数据生产链（layout 转换、编码顺序）
+   ```
