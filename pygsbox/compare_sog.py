@@ -132,14 +132,10 @@ def roundtrip_verify(orig_ply: str, sog_path: str, label: str):
     else:
         print(f"  Scale:            all NaN (source data issue)")
 
-    # ---- Color (via f_dc_0 raw) ----
-    ce_raw = np.abs(o_col[tight] - dec.color[rix].astype(float))  # won't match — color is SH-encoded
-    # Instead, compare encoded uint8 color
-    go_u8 = np.clip(np.round((0.5 + SH_C0 * o_col[tight]) * 255), 0, 255).astype(int)
-    py_u8 = dec.color[rix].astype(int)
-    cu8 = np.abs(go_u8[:, None].flatten() if False else 0)
-    # Compare channel-by-channel
-    cu8_r = np.abs(go_u8 - py_u8[:, 0])  # R comparison only
+    # ---- Color R channel (f_dc_0 → uint8, compare with decoded SOG R) ----
+    go_u8 = np.clip(np.round((0.5 + SH_C0 * o_col[tight]) * 255), 0, 255).astype(np.int32)
+    py_u8_r = dec.color[rix, 0].astype(np.int32)  # R channel from SOG
+    cu8_r = np.abs(go_u8 - py_u8_r)
     print(f"  Color R:          max={np.max(cu8_r):3d}  mean={np.mean(cu8_r):.2f}  zero={np.sum(cu8_r == 0)}/{len(tight)}")
 
     # ---- Color full RGBA via SOG reader ----
@@ -155,10 +151,10 @@ def roundtrip_verify(orig_ply: str, sog_path: str, label: str):
 
     # ---- Rotation angular error ----
     angles = []
-    for i in tight[:2000]:
-        j = rix[i]
-        q1 = np.array([decode_splat_rotation(int(orig_plydata.rotation[i, k])) for k in range(4)])
-        q2 = np.array([decode_splat_rotation(int(dec.rotation[j, k])) for k in range(4)])
+    for k_idx, i in enumerate(tight[:2000]):
+        j = rix[k_idx]  # rix is indexed by position in tight, not by tight's values
+        q1 = np.array([decode_splat_rotation(int(orig_plydata.rotation[i, c])) for c in range(4)])
+        q2 = np.array([decode_splat_rotation(int(dec.rotation[j, c])) for c in range(4)])
         n1, n2 = np.linalg.norm(q1), np.linalg.norm(q2)
         if n1 > 0 and n2 > 0:
             dot = np.clip(np.abs(np.dot(q1 / n1, q2 / n2)), 0, 1)
@@ -168,10 +164,23 @@ def roundtrip_verify(orig_ply: str, sog_path: str, label: str):
 
     # ---- SH (K-Means compression, expected to differ) ----
     if o_sh is not None and dec.sh.size > 0:
-        she = np.abs(o_sh[tight[:2000]] - dec.sh[rix[:2000]].astype(np.float32))
+        # o_sh from _read_ply_raw: channel-major floats, sh[:, basis + channel * 15]
+        # dec.sh from SOG reader: basis-major (INTERLEAVED) uint8, sh[:, basis * 3 + channel]
+        # Must rearrange o_sh to basis-major and decode dec.sh to float before comparing.
+        sh_dim = 15  # sh_degree=3
+        n_pts = min(2000, len(tight))
+        o_sh_sub = o_sh[tight[:n_pts]]  # (n_pts, 45), channel-major floats from PLY
+        # Rearrange: channel-major → basis-major
+        o_sh_bm = np.zeros((n_pts, 45), dtype=np.float32)
+        for basis in range(sh_dim):
+            for channel in range(3):
+                o_sh_bm[:, basis * 3 + channel] = o_sh_sub[:, basis + channel * sh_dim]
+        # Decode dec.sh (uint8 0..255) → float: (val - 128) / 128
+        dec_sh_f = (dec.sh[rix[:n_pts]].astype(np.float32) - 128.0) / 128.0
+        she = np.abs(o_sh_bm - dec_sh_f)
         for s, e, name in [(0, 9, 'deg1'), (9, 24, 'deg2'), (24, 45, 'deg3')]:
             b = she[:, s:e]
-            orig_abs = np.mean(np.abs(o_sh[tight[:2000], s:e]))
+            orig_abs = np.mean(np.abs(o_sh_bm[:, s:e]))
             err_mean = np.mean(b)
             rel = err_mean / orig_abs * 100 if orig_abs > 0 else 0
             print(f"  SH {name}:         max={np.max(b):.3f}  mean={err_mean:.3f}  relative={rel:.0f}% (K-Means compression)")
