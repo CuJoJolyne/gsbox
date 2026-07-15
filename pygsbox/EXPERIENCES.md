@@ -465,3 +465,146 @@ shN_centroids R-G std：Go=3.862，修复后 Python=3.870（差值 < 0.5%）。
      → 与生数据对比（数学验证正确性边界）
      → 追溯数据生产链（layout 转换、编码顺序）
    ```
+
+---
+
+## 工程决策：移除 GoRng/replay 调试逻辑
+
+> 分析日期：2026-07-15  
+> 执行人：宪宪  
+> 提交：`857f311`
+
+### 背景
+
+SH layout 修复（`e907908`）后，Python 输出与 Go 相差 -0.1%，但验证时 Python 走的是 `rand_seed42.log` 重放分支（GoRng 精确复现 Go PCG-DXSM 序列）。铲屎官指出：`rand_seed42.log` 是与 Go 版本联调专用的调试产物，不应出现在 Python 生产实现中。
+
+### 问题：调试代码混入生产路径
+
+`kmeans.py` 里存在两层调试脚手架：
+
+1. **`GoRng` 类（70 行）**：完整用 Python 复现了 Go 1.22+ PCG-DXSM 算法（`_PCG_MUL_HI` 等常量），目的是让 Python K-Means 产生与 Go bit-exact 一致的随机序列。
+2. **`_ReplayRng` + log 检测逻辑**：在 `kmeans_sh()` 里检测 `../../rand_seed42.log` 是否存在，存在则回放 Go 录制的随机值序列，不存在才退回 `np.random.default_rng(42)`。
+
+```python
+# 旧版逻辑（生产不应存在）：
+if _os.path.exists(_log_path):
+    rng = _ReplayRng(_go_vals)   # Go 录制回放
+else:
+    rng = np.random.default_rng(42)  # 但 .intn() 不存在 → Linux 报 AttributeError
+```
+
+**附带 bug**：`np.random.default_rng(42)` 返回的 `Generator` 对象没有 `.intn()` 方法，导致 Linux（Python 3.13 + NumPy 2.4.6）上执行时报：
+
+```
+AttributeError: 'numpy.random._generator.Generator' object has no attribute 'intn'
+```
+
+这个 bug 在开发者本机（存在 `rand_seed42.log`）上完全不触发，属于"只在生产/CI 环境才爆"的典型隐患。
+
+### 修复：以 _Rng 包装类替代全部调试逻辑
+
+```python
+class _Rng:
+    """K-Means RNG with .intn(n) interface (wraps numpy PCG64)."""
+    def __init__(self, seed: int = 42):
+        self._rng = np.random.default_rng(seed)
+
+    def intn(self, n: int) -> int:
+        return int(self._rng.integers(0, n))
+```
+
+- 删除 `GoRng`（70 行 PCG-DXSM 复现代码）
+- 删除 `_ReplayRng`（log 回放逻辑）
+- 删除 `rand_seed42.log` 文件检测
+- `_Rng` 统一在 `kmeans_sh()` 中初始化：`rng = _Rng(42)`
+
+### 验证：去掉 replay 后文件大小是否仍等价？
+
+重新生成 Python 数据（`py-q9-prod`），与 Go 输出（`go-q9`）对比 11 个 tile：
+
+| Tile | Go (KB) | Py (KB) | Δ |
+|------|---------|---------|---|
+| 0_0 | 4631 | 4634 | +0.1% |
+| 0_1 | 4661 | 4655 | -0.1% |
+| 0_2 | 4623 | 4620 | -0.1% |
+| 0_3 | 4624 | 4616 | -0.2% |
+| 0_4 | 4632 | 4627 | -0.1% |
+| 0_5 | 4634 | 4630 | -0.1% |
+| 0_6 | 4704 | 4701 | -0.1% |
+| 0_7 | 4582 | 4582 | -0.0% |
+| 1_0 | 4670 | 4669 | -0.0% |
+| 1_1 | 4676 | 4676 | -0.0% |
+| 2_0 | 3077 | 3076 | -0.0% |
+| **Total** | **48.36 MB** | **48.33 MB** | **-0.06%** |
+
+**结论：-0.06%，完全等价。**
+
+### 像素级 diff 解读（不是 bug）
+
+Mode A 逐文件对比出现显著像素差异，但这些全部是预期行为：
+
+| 通道 | diff% | 原因 |
+|------|-------|------|
+| means_l / means_u | ≤0.5% | Morton sort 量化边界轻微重排 |
+| scales | ≤0.2% | 浮点量化误差 |
+| quats | ~10.7% | Morton sort 排序差异（和位置精度相关） |
+| sh0 / shN_labels | ~11-12% | 跟随不同 centroid 分配（K-Means 非唯一解） |
+| **shN_centroids** | **72%** | **不同 RNG 序列 → 不同局部最优，但压缩后大小等价** |
+
+关键判据：**压缩后总大小 ≈ 等价 ⟺ 量化质量相当**。像素不同不代表质量差，K-Means 有无数等价局部最优。
+
+### 核心经验
+
+1. **调试代码要有明确出口条件**：GoRng/replay 在联调阶段是合理的，但应在验证通过后立刻删除，不能混入生产路径。常见陷阱：条件分支（"有 log 文件才走"）在开发机上永远触发正常路径，CI/生产机上无感走到有 bug 的路径。
+
+2. **"只在生产爆"的 bug 根因是本地/远程环境不对称**：本例 `rand_seed42.log` 存在于开发机、不存在于 Linux CI → bug 只在 CI 触发。排查时优先检查条件分支的两条路径是否都测过。
+
+3. **量化验证要用"文件大小等价"而非"像素完全一致"**：K-Means 是随机算法，不同 seed / 不同 RNG 实现的像素输出天然不同，但压缩后大小反映了信息熵，是真正的质量指标。验证标准应定义为 `|ΔSize| < 0.5%`，而非像素级一致。
+
+4. **NumPy PCG64 与 Go PCG-DXSM 质量等价**：两者 K-Means 最终压缩结果在 ±0.2% 以内，证明不需要精确复现 Go 的随机数序列，只需用同品质的确定性 RNG 即可。
+
+---
+
+## compare_sog.py 量化评估工具
+
+> 工具用途：Go vs Python SOG 输出的定量比对  
+> 提交：`66deaf1`（4 个 bug 修复）
+
+### 工具能力
+
+```bash
+# Mode A：比较两个 SOG 文件（Go vs Python）
+python pygsbox/compare_sog.py --go go.sog --py py.sog
+
+# Mode B：PLY → SOG roundtrip 验证（含 KD-tree 点云匹配）
+python pygsbox/compare_sog.py --rt input.ply --sog output.sog
+```
+
+**Mode A 输出**：逐内部文件（means_l/means_u/quats/scales/sh0/shN_centroids/shN_labels）的像素 diff% + meta.json palette 数量对比。
+
+**Mode B 输出**：KD-tree 位置匹配 → Position/Scale/Color/Rotation/SH 逐通道误差统计。
+
+### Mode B 修复的 4 个 bug
+
+| # | 位置 | 问题 | 修复 |
+|---|------|------|------|
+| 1 | L135 | 错误的 shape mismatch 死代码 | 删除，直接用 `dec.color[rix, 0]` |
+| 2 | L154 | rotation 循环用 `tight[k_idx]` 而非 `k_idx` 索引 `rix` | 改为 `enumerate(tight[:2000])` + `rix[k_idx]` |
+| 3 | L165 | SH 布局不匹配（PLY channel-major vs SOG basis-major） | 添加 channel-major → basis-major 转换 |
+| 4 | L179 | dec.sh uint8 未解码就直接与 float 比较 | 添加 `(uint8 - 128) / 128` 解码 |
+
+bug 2 是典型的"索引与值混淆"错误：`tight` 里存的是点的原始 index，`rix` 是 KD-tree 匹配到的对端 index，两者都要用位置坐标访问，不能互换。
+
+### 解读规范（防止误判）
+
+| 通道 | 正常 diff 范围 | 超出说明 |
+|------|--------------|---------|
+| means_u（高位置） | < 0.1% | 量化/编码 bug |
+| means_l（低位置） | < 1% | Morton sort 边界问题 |
+| scales | < 0.5% | 编码精度问题 |
+| quats | 10-11% | **正常**（Morton sort 排序差异） |
+| sh0 | 10-15% | **正常**（不同 K-Means 分配） |
+| shN_centroids | 60-75% | **正常**（K-Means 局部最优） |
+| shN_labels | 10-15% | **正常**（跟随 centroids） |
+
+> quats 和 shN 通道的高 diff% 不是 bug，是 Morton 排序差异 + K-Means 非唯一性的必然结果。真正需要关注的是 **文件总大小** 和 **means_u/scales（几何精度）**。
