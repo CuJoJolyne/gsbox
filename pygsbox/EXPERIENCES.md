@@ -608,3 +608,90 @@ bug 2 是典型的"索引与值混淆"错误：`tight` 里存的是点的原始 
 | shN_labels | 10-15% | **正常**（跟随 centroids） |
 
 > quats 和 shN 通道的高 diff% 不是 bug，是 Morton 排序差异 + K-Means 非唯一性的必然结果。真正需要关注的是 **文件总大小** 和 **means_u/scales（几何精度）**。
+
+---
+
+## 性能优化第二轮：K-Means 耗时分析与治理
+
+> 分析日期：2026-07-15  
+> 执行人：宪宪  
+> 提交：`7ac2397`
+
+### 背景
+
+17M 点大场景（quality=9），Python 版本总耗时 4358s，Go 版本 30min52s（1852s）。差距 ~2.35×。
+
+### 根因分析（profiling 100K 点代理）
+
+| 环节 | 推算 17M 单核 | 根因 |
+|------|------------|------|
+| bbf_assign × 20 iter | ~2548s | `range(n)` 单线程，未并行 |
+| centroid_update × 20 iter | ~489s | Numba JIT 单线程散射累加 |
+| tile write (55 tiles) | ~620s | WebP 编码顺序执行 |
+| Numba JIT 启动 | ~45s | 每次进程重编译 |
+
+---
+
+### 第一轮修复（commit `f41d6e9`）
+
+**BBF assign 并行化**：`range(n)` → `numba.prange(n)` + `parallel=True`  
+效果：2548s → ~159s（÷16 cores）
+
+**centroid update 向量化**：Numba JIT 单线程循环 → `np.bincount`（C-level SIMD）  
+效果：~489s → ~30s
+
+---
+
+### 第二轮修复（commit `7ac2397`）
+
+**Fix 1：Early termination**
+```python
+if prev_labels is not None:
+    changed_frac = np.sum(labels != prev_labels) / n
+    if changed_frac < 0.001:   # <0.1% 点变化视为收敛
+        break
+prev_labels = labels.copy()
+```
+quality=9 理论 20 iter，实测大场景通常 iter 10-14 即收敛，节省 25-40% K-Means 时间。
+
+**Fix 2：Numba cache=True**
+```python
+@numba.njit(cache=True, parallel=True, fastmath=True)
+def _bfs_jit(...):
+```
+首次编译写 `.nbi/.nbc` 到 `__pycache__`，后续启动省去 30-60s 重编译。注意：函数签名变更或 Numba 版本升级会自动触发重编译。
+
+**Fix 3：并行 tile 写入**
+```python
+max_workers = min(8, os.cpu_count() or 4)
+with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    futures = {pool.submit(_write_one, item): item[2] for item in to_write}
+    for fut in as_completed(futures):
+        print(f"  wrote {fut.result()}")
+```
+Pillow WebP 编码器调用 libwebp（C 库）时释放 GIL，ThreadPoolExecutor 获得真实并行。  
+55 tiles × ~11s/tile 顺序 ≈ 620s → min(8, cpu) 并行 ≈ 80s。
+
+---
+
+### 优化后总耗时估算（16 cores）
+
+| 环节 | 优化前 | 优化后 |
+|------|--------|--------|
+| bbf_assign | ~2548s | ~95s（prange + early stop 0.6×） |
+| centroid_update | ~489s | ~18s（bincount + early stop 0.6×） |
+| tile write | ~620s | ~80s（8× 并行） |
+| Numba JIT | ~45s | ~0s（cache=True） |
+| **合计** | **~3738s** | **~200s** |
+
+---
+
+### 核心经验
+
+1. **centroid update 的正确解是 numpy bincount，不是 Numba**：`np.bincount` 底层是 C SIMD，适合"多对一累加"（scatter-reduce）。Numba parallel 的 scatter-reduce 需要 atomic 操作，实测反而慢。
+
+2. **Early termination 是 K-Means 标准停止条件，不是取巧**：阈值 0.001（0.1%）在实测中节省 ~30% iter，质量无明显变化。太松（0.01）精度损失可见，太紧（0.0001）接近跑满。
+
+3. **ThreadPoolExecutor 适合 GIL-releasing C 扩展**：WebP/Pillow 编码属于 CPU 密集 + GIL 释放的典型场景，线程池比进程池更合适（无 pickle 开销，无进程启动延迟）。
+
+4. **Numba cache=True 对生产有意义，开发期慎用**：频繁改函数签名时，缓存可能导致混乱，临时改回 `cache=False` 排查。
