@@ -143,24 +143,17 @@ def kmeans_sh(data: SplatData, sh_degree: int,
         else:
             labels = _bbf_assign(shs_f32, tree, dim, max_bbf_nodes)
 
-        # 3. Compute new centroids + handle empties
+        # 3. Compute new centroids + handle empties (vectorized, O(n*dim) numpy)
+        # np.bincount is C-level SIMD — replaces both single-threaded Numba JIT
+        # and pure-Python fallback loops (17M*45 iterations).
+        counts = np.bincount(labels, minlength=palette_size).astype(np.int32)
         new_centroids = np.zeros((palette_size, 45), dtype=np.float32)
-        counts = np.zeros(palette_size, dtype=np.int32)
-
-        if _HAS_NUMBA:
-            from .kmeans_bbf import _centroid_update_jit, _centroid_divide_jit
-            _centroid_update_jit(shs_f32, labels, palette_size, dim, new_centroids, counts)
-            _centroid_divide_jit(new_centroids, centroids_f32, counts, palette_size, dim)
-        else:
-            for i in range(n):
-                c = labels[i]
-                for d in range(dim):
-                    new_centroids[c, d] += shs_f32[i, d]
-                counts[c] += 1
-            for c in range(palette_size):
-                if counts[c] > 0:
-                    for d in range(dim):
-                        new_centroids[c, d] /= float(counts[c])
+        for d in range(dim):
+            new_centroids[:, d] = np.bincount(
+                labels, weights=shs_f32[:, d], minlength=palette_size
+            ).astype(np.float32)
+        safe_counts = np.where(counts > 0, counts, 1).astype(np.float32)
+        new_centroids[:, :dim] /= safe_counts[:, np.newaxis]
 
         # 4. Handle empty clusters: re-init from random data point (match Go)
         for c in range(palette_size):
