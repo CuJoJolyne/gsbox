@@ -248,7 +248,7 @@ def _bfs_worker_shm(pts_name, pts_shape, pts_dtype,
 
 try:
     import numba
-    @numba.njit(cache=False, parallel=True, fastmath=True)
+    @numba.njit(cache=True, parallel=True, fastmath=True)
     def _bfs_jit(points, cents, idx_arr, axis_arr, left_arr, right_arr, dim, max_bbf_nodes, labels):
         n = len(points)
         for i in numba.prange(n):

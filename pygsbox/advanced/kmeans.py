@@ -129,12 +129,15 @@ def kmeans_sh(data: SplatData, sh_degree: int,
             fail_cnt += 1
 
     labels = np.zeros(n, dtype=np.int32)
+    prev_labels = None
 
     from .kmeans_bbf import _build_kdtree, _bbf_assign, _bbf_assign_numba, _HAS_NUMBA
     from ..common.progress import Progress, PHASE_KMEANS
 
+    actual_iters = 0
     for it in range(iterations):
         Progress.report(PHASE_KMEANS, it, iterations)
+        actual_iters += 1
 
         # 2. Build KD-Tree + BBF assignment
         tree = _build_kdtree(centroids_f32)
@@ -163,7 +166,15 @@ def kmeans_sh(data: SplatData, sh_degree: int,
 
         centroids_f32 = new_centroids
 
-    Progress.done(PHASE_KMEANS, iterations)
+        # 5. Early termination: stop if <0.1% of points changed assignment
+        if prev_labels is not None:
+            changed_frac = np.sum(labels != prev_labels) / n
+            if changed_frac < 0.001:
+                Progress.done(PHASE_KMEANS, actual_iters)
+                break
+        prev_labels = labels.copy()
+
+    Progress.done(PHASE_KMEANS, actual_iters)
 
     # 4. Convert float32 → uint8, zero out dim..45
     centroids_uint8 = np.full((palette_size, 45), 128, dtype=np.uint8)

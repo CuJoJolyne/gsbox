@@ -352,14 +352,31 @@ def cmd_cut(args: dict) -> None:
     tiles, meta = lod_module.build_tiles_from_btree(merged, root, lod_levels=lod_levels_count, sh_degree=max_sh)
 
     out_dir = os.path.dirname(out_path) or '.'
-    for splat_file in tiles.files.values():
-        if splat_file.datas is None or splat_file.datas.count == 0:
-            continue
-        sog_path = os.path.join(out_dir, splat_file.url)
-        write_sog(sog_path, splat_file.datas, sh_degree=max_sh, as_zip=True, quality=quality,
+
+    # Collect tiles to write; Pillow's WebP encoder releases the GIL so
+    # ThreadPoolExecutor gives true parallelism here (no multiprocessing overhead).
+    to_write = [
+        (os.path.join(out_dir, sf.url), sf.datas, sf.url)
+        for sf in tiles.files.values()
+        if sf.datas is not None and sf.datas.count > 0
+    ]
+
+    def _write_one(item):
+        sog_path, datas, url = item
+        write_sog(sog_path, datas, sh_degree=max_sh, as_zip=True, quality=quality,
                   sh_centroids=sh_centroids)
-        splat_file.datas = None
-        print(f"  wrote {splat_file.url}")
+        return url
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    max_workers = min(8, os.cpu_count() or 4)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_write_one, item): item[2] for item in to_write}
+        for fut in as_completed(futures):
+            print(f"  wrote {fut.result()}")
+
+    # Free tile data after all writes complete
+    for sf in tiles.files.values():
+        sf.datas = None
 
     json_str = lod_module.lod_meta_to_json(meta)
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
