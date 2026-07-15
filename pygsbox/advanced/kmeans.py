@@ -4,100 +4,16 @@ from typing import Tuple, Optional
 from ..core.splat_data import SplatData
 from ..common import codec
 
-_MASK64 = (1 << 64) - 1
-
-# PCG-DXSM constants (from Go 1.22+ math/rand/v2)
-_PCG_MUL_HI = 2549297995355413924
-_PCG_MUL_LO = 4865540595714422341
-_PCG_INC_HI = 6364136223846793005
-_PCG_INC_LO = 1442695040888963407
-_PCG_CHEAP_MUL = 0xDA942042E4DD58B5
-
-
-class GoRng:
-    """Replicate Go 1.22+ math/rand PCG-DXSM generator exactly."""
-
-    def __init__(self, seed: int):
-        self.hi = seed & _MASK64
-        self.lo = 0
-
-    def _next(self) -> int:
-        lo, hi = self.lo, self.hi
-        prod = lo * _PCG_MUL_LO
-        h = (prod >> 64) & _MASK64
-        l = prod & _MASK64
-        h = (h + hi * _PCG_MUL_LO + lo * _PCG_MUL_HI) & _MASK64
-        l2 = (l + _PCG_INC_LO) & _MASK64
-        carry = 1 if l2 < l else 0
-        h2 = (h + _PCG_INC_HI + carry) & _MASK64
-        self.hi, self.lo = h2, l2
-        return ((h2 ^ (h2 >> 32)) * _PCG_CHEAP_MUL ^ ((h2 ^ (h2 >> 32)) * _PCG_CHEAP_MUL >> 48)) * (l2 | 1)
-
-    def uint64(self) -> int:
-        lo, hi = self.lo, self.hi
-        prod = lo * _PCG_MUL_LO
-        h = (prod >> 64) & _MASK64
-        l = prod & _MASK64
-        h = (h + hi * _PCG_MUL_LO + lo * _PCG_MUL_HI) & _MASK64
-        l2 = (l + _PCG_INC_LO) & _MASK64
-        carry = 1 if l2 < l else 0
-        h2 = (h + _PCG_INC_HI + carry) & _MASK64
-        self.hi, self.lo = h2, l2
-        out = h2 ^ (h2 >> 32)
-        out = (out * _PCG_CHEAP_MUL) & _MASK64
-        out ^= out >> 48
-        out = (out * (l2 | 1)) & _MASK64
-        return int(out)
-
-    def intn(self, n: int) -> int:
-        if n <= 0:
-            return 0
-        if n <= (1 << 31) - 1:
-            return self._int31n(int(n))
-        return self._int63n(int(n))
-
-    def _int31n(self, n: int) -> int:
-        v = self.uint64() >> 32
-        prod = v * n
-        low = prod & 0xFFFFFFFF
-        if low < n:
-            thresh = (-n) % n
-            while low < thresh:
-                v = self.uint64() >> 32
-                prod = v * n
-                low = prod & 0xFFFFFFFF
-        return (prod >> 32) & 0x7FFFFFFF
-
-    def _int63n(self, n: int) -> int:
-        v = self.uint64() >> 1
-        prod = v * n
-        low = prod & 0x7FFFFFFFFFFFFFFF
-        if low < n:
-            thresh = (-n) % n
-            while low < thresh:
-                v = self.uint64() >> 1
-                prod = v * n
-                low = prod & 0x7FFFFFFFFFFFFFFF
-        return (prod >> 63) & 0x7FFFFFFFFFFFFFFF
-
 SH_DIMS = [0, 9, 24, 45]
 
 
-class _ReplayRng:
-    """Replay random values from a pre-recorded Go rand log."""
-    def __init__(self, values):
-        self._vals = values if values else []
-        self._pos = 0
+class _Rng:
+    """K-Means RNG with .intn(n) interface (wraps numpy PCG64)."""
+    def __init__(self, seed: int = 42):
+        self._rng = np.random.default_rng(seed)
 
     def intn(self, n: int) -> int:
-        if self._pos < len(self._vals):
-            v = self._vals[self._pos]
-            self._pos += 1
-            return v
-        return 0
-
-    def remaining(self) -> int:
-        return len(self._vals) - self._pos
+        return int(self._rng.integers(0, n))
 
 WEBP_QUALITY_TABLE = [80, 84, 86, 88, 90, 92, 94, 96, 99]
 
@@ -195,15 +111,8 @@ def kmeans_sh(data: SplatData, sh_degree: int,
     shs_uint8 = get_sh_for_kmeans(data, quality)
     shs_f32 = sh_to_float32(shs_uint8)
 
-    # 1. Random unique init + iteration re-init: replay Go's recorded values
-    import os as _os
-    _log_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'rand_seed42.log')
-    if _os.path.exists(_log_path):
-        with open(_log_path) as f:
-            _go_vals = [int(x) for x in f.read().split()]
-        rng = _ReplayRng(_go_vals)
-    else:
-        rng = np.random.default_rng(42)
+    # 1. Random unique init (deterministic seed for reproducibility)
+    rng = _Rng(42)
 
     centroids_f32 = np.zeros((palette_size, 45), dtype=np.float32)
     used = set()
