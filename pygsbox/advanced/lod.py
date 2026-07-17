@@ -303,34 +303,10 @@ def build_tiles_from_btree(data: SplatData, root: BTreeNode, lod_levels: int,
         sh_degree=sh_degree, comment=comment,
     )
 
-    _compute_leaf_bounds(tiles)
     _propagate_bounds(tiles.tree)
 
     lod_meta = _build_lod_meta(tiles)
     return tiles, lod_meta
-
-
-def _compute_leaf_bounds(tiles: SplatTiles) -> None:
-    """Compute AABB bound for each leaf node matching Go's calcLodMetaBound."""
-    for file_key, splat_file in tiles.files.items():
-        if splat_file.datas is None or splat_file.datas.count == 0:
-            continue
-        pos = splat_file.datas.position
-        bound = Bound(min=[float(np.min(pos[:, 0])), float(np.min(pos[:, 1])), float(np.min(pos[:, 2]))],
-                      max=[float(np.max(pos[:, 0])), float(np.max(pos[:, 1])), float(np.max(pos[:, 2]))])
-        # Attach bound to matching leaf nodes in tree
-        _attach_bound_to_leaves(tiles.tree, file_key, bound)
-
-
-def _attach_bound_to_leaves(node: SplatNode, file_key: str, bound: Bound) -> None:
-    if node.lods is not None:
-        for tm in node.lods:
-            if tm is not None and tm.file_key == file_key:
-                node.bound = bound
-                return
-    if node.children:
-        for child in node.children:
-            _attach_bound_to_leaves(child, file_key, bound)
 
 
 def _propagate_bounds(node: SplatNode) -> Optional[Bound]:
@@ -355,7 +331,12 @@ def _copy_to_splat_tree(bnode: BTreeNode, snode: SplatNode) -> None:
     snode.radius = bnode.mm.radius
     if bnode.is_leaf:
         snode.lods = [t for t in bnode.lods if t is not None]  # type: ignore[assignment]
-        snode.bound = bnode.bound
+        # Compute per-leaf bound from the BTreeNode's actual point bbox
+        # (matches Go's calcLodMetaBound which computes AABB per leaf node)
+        snode.bound = Bound(
+            min=[bnode.mm.min_x, bnode.mm.min_y, bnode.mm.min_z],
+            max=[bnode.mm.max_x, bnode.mm.max_y, bnode.mm.max_z],
+        )
     else:
         snode.children = []
         for child in bnode.children:
