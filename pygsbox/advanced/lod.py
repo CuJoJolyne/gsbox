@@ -326,17 +326,79 @@ def _propagate_bounds(node: SplatNode) -> Optional[Bound]:
     return node.bound
 
 
+def _calc_aabb_bound(data: SplatData) -> Bound:
+    """Compute AABB accounting for gaussian rotation + scale ellipsoid.
+    Matches Go's calcLodMetaBound + CalcSplatAABB exactly."""
+    pos = data.position  # (N, 3) float32
+    rot = data.rotation  # (N, 4) uint8 [W, X, Y, Z]
+    scl = data.scale     # (N, 3) float32 (log-scale)
+
+    # Decode rotation: uint8 -> float32 quaternion components
+    r = (rot.astype(np.float32) - 128.0) / 128.0
+    rw, rx, ry, rz = r[:, 0], r[:, 1], r[:, 2], r[:, 3]
+
+    # Normalize quaternion
+    len_sq = rx * rx + ry * ry + rz * rz + rw * rw
+    len_inv = np.where(len_sq > 0, 1.0 / np.sqrt(len_sq), 0.0).astype(np.float32)
+    rx = rx * len_inv
+    ry = ry * len_inv
+    rz = rz * len_inv
+    rw = rw * len_inv
+
+    # Decode scale: log -> real (exp), clip to avoid inf
+    sx = np.exp(np.clip(scl[:, 0], -20.0, 20.0))
+    sy = np.exp(np.clip(scl[:, 1], -20.0, 20.0))
+    sz = np.exp(np.clip(scl[:, 2], -20.0, 20.0))
+
+    # Rotation matrix elements from quaternion
+    xx, yy, zz = rx * rx, ry * ry, rz * rz
+    xy, xz, yz = rx * ry, rx * rz, ry * rz
+    wx, wy, wz = rw * rx, rw * ry, rw * rz
+
+    m00 = 1 - 2 * (yy + zz)
+    m01 = 2 * (xy - wz)
+    m02 = 2 * (xz + wy)
+    m10 = 2 * (xy + wz)
+    m11 = 1 - 2 * (xx + zz)
+    m12 = 2 * (yz - wx)
+    m20 = 2 * (xz - wy)
+    m21 = 2 * (yz + wx)
+    m22 = 1 - 2 * (xx + yy)
+
+    # AABB half-extents: |R| * scale (per-gaussian)
+    half_x = np.abs(m00) * sx + np.abs(m01) * sy + np.abs(m02) * sz
+    half_y = np.abs(m10) * sx + np.abs(m11) * sy + np.abs(m12) * sz
+    half_z = np.abs(m20) * sx + np.abs(m21) * sy + np.abs(m22) * sz
+
+    # Per-gaussian AABB min/max
+    mins_x = pos[:, 0] - half_x
+    mins_y = pos[:, 1] - half_y
+    mins_z = pos[:, 2] - half_z
+    maxs_x = pos[:, 0] + half_x
+    maxs_y = pos[:, 1] + half_y
+    maxs_z = pos[:, 2] + half_z
+
+    # Union of all AABBs
+    return Bound(
+        min=[float(np.min(mins_x)), float(np.min(mins_y)), float(np.min(mins_z))],
+        max=[float(np.max(maxs_x)), float(np.max(maxs_y)), float(np.max(maxs_z))],
+    )
+
+
 def _copy_to_splat_tree(bnode: BTreeNode, snode: SplatNode) -> None:
     snode.center = [bnode.mm.center_x, bnode.mm.center_y, bnode.mm.center_z]
     snode.radius = bnode.mm.radius
     if bnode.is_leaf:
         snode.lods = [t for t in bnode.lods if t is not None]  # type: ignore[assignment]
-        # Compute per-leaf bound from the BTreeNode's actual point bbox
-        # (matches Go's calcLodMetaBound which computes AABB per leaf node)
-        snode.bound = Bound(
-            min=[bnode.mm.min_x, bnode.mm.min_y, bnode.mm.min_z],
-            max=[bnode.mm.max_x, bnode.mm.max_y, bnode.mm.max_z],
-        )
+        # Compute per-leaf AABB from rotation + scale ellipsoid
+        # (matches Go's calcLodMetaBound which uses CalcSplatAABB)
+        if bnode.data is not None and bnode.data.count > 0:
+            snode.bound = _calc_aabb_bound(bnode.data)
+        else:
+            snode.bound = Bound(
+                min=[bnode.mm.min_x, bnode.mm.min_y, bnode.mm.min_z],
+                max=[bnode.mm.max_x, bnode.mm.max_y, bnode.mm.max_z],
+            )
     else:
         snode.children = []
         for child in bnode.children:
